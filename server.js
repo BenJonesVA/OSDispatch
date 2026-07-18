@@ -125,7 +125,7 @@ app.post('/api/login', async (req, res) => {
   }
 
   const result = await pool.query(
-    'SELECT id, username, password_hash, role, display_name FROM users WHERE username = $1',
+    'SELECT id, username, password_hash, role, display_name FROM users WHERE username = $1 AND active = true',
     [username]
   );
   const user = result.rows[0];
@@ -216,6 +216,10 @@ app.get('/dispatch', requireRole('dispatcher'), (req, res) => {
 
 app.get('/dispatch/drivers', requireRole('dispatcher'), (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'drivers.html'));
+});
+
+app.get('/dispatch/dispatchers', requireRole('dispatcher'), (req, res) => {
+  res.sendFile(path.join(__dirname, 'views', 'dispatchers.html'));
 });
 
 const PIN_PATTERN = /^\d{4}$/;
@@ -337,6 +341,110 @@ app.patch('/api/drivers/:id', requireRole('dispatcher'), async (req, res) => {
 
   if (!result.rows[0]) return res.status(404).json({ error: 'Driver not found.' });
   res.json(mapDriverRow(result.rows[0]));
+});
+
+// Weak passwords are still bcrypt-hashed, but a short one is trivial to
+// brute-force against a login form that (unlike the driver PIN endpoint)
+// has no dedicated rate limiter — so worth rejecting at creation time.
+const PASSWORD_MIN_LENGTH = 8;
+
+function mapDispatcherRow(row) {
+  return {
+    id: row.id,
+    username: row.username,
+    displayName: row.display_name,
+    active: row.active,
+    createdAt: row.created_at,
+  };
+}
+
+app.get('/api/dispatchers', requireRole('dispatcher'), async (req, res) => {
+  const result = await pool.query(
+    `SELECT id, username, display_name, active, created_at
+     FROM users WHERE role = 'dispatcher'
+     ORDER BY created_at ASC`
+  );
+  res.json(result.rows.map(mapDispatcherRow));
+});
+
+app.post('/api/dispatchers', requireRole('dispatcher'), async (req, res) => {
+  const { username, displayName, password } = req.body || {};
+  if (typeof username !== 'string' || !username.trim() || typeof displayName !== 'string' || !displayName.trim()) {
+    return res.status(400).json({ error: 'Username and display name are required.' });
+  }
+  if (typeof password !== 'string' || password.length < PASSWORD_MIN_LENGTH) {
+    return res.status(400).json({ error: `Password must be at least ${PASSWORD_MIN_LENGTH} characters.` });
+  }
+
+  const passwordHash = await bcrypt.hash(password, 10);
+  try {
+    const result = await pool.query(
+      `INSERT INTO users (username, password_hash, role, display_name, active)
+       VALUES ($1, $2, 'dispatcher', $3, true)
+       RETURNING id, username, display_name, active, created_at`,
+      [username.trim(), passwordHash, displayName.trim()]
+    );
+    res.status(201).json(mapDispatcherRow(result.rows[0]));
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'That username is already in use.' });
+    }
+    console.error('Failed to create dispatcher:', err.message);
+    res.status(500).json({ error: 'Failed to create dispatcher.' });
+  }
+});
+
+app.patch('/api/dispatchers/:id', requireRole('dispatcher'), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid dispatcher id.' });
+
+  const { displayName, active, password } = req.body || {};
+  const sets = [];
+  const values = [];
+
+  if (displayName !== undefined) {
+    if (typeof displayName !== 'string' || !displayName.trim()) {
+      return res.status(400).json({ error: 'Display name cannot be empty.' });
+    }
+    values.push(displayName.trim());
+    sets.push(`display_name = $${values.length}`);
+  }
+
+  if (active !== undefined) {
+    if (typeof active !== 'boolean') {
+      return res.status(400).json({ error: 'active must be a boolean.' });
+    }
+    // Without this, a dispatcher could deactivate their own only remaining
+    // account and get locked out with no other dispatcher left to undo it.
+    if (!active && id === req.session.user.id) {
+      return res.status(400).json({ error: 'You cannot deactivate your own account.' });
+    }
+    values.push(active);
+    sets.push(`active = $${values.length}`);
+  }
+
+  if (password !== undefined) {
+    if (typeof password !== 'string' || password.length < PASSWORD_MIN_LENGTH) {
+      return res.status(400).json({ error: `Password must be at least ${PASSWORD_MIN_LENGTH} characters.` });
+    }
+    values.push(await bcrypt.hash(password, 10));
+    sets.push(`password_hash = $${values.length}`);
+  }
+
+  if (!sets.length) {
+    return res.status(400).json({ error: 'No fields to update.' });
+  }
+
+  values.push(id);
+  const result = await pool.query(
+    `UPDATE users SET ${sets.join(', ')}
+     WHERE id = $${values.length} AND role = 'dispatcher'
+     RETURNING id, username, display_name, active, created_at`,
+    values
+  );
+
+  if (!result.rows[0]) return res.status(404).json({ error: 'Dispatcher not found.' });
+  res.json(mapDispatcherRow(result.rows[0]));
 });
 
 app.get('/dispatch/history', requireRole('dispatcher'), (req, res) => {

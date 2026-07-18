@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Manage Dispatchers — OSDispatch</title>
+<link rel="icon" href="data:," />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/theme.css">
+<style>
+  .page-wrap { max-width: 1240px; margin: 0 auto; padding: 20px; }
+  .panel { display: flex; }
+  .panel-main { flex: 1; min-width: 0; padding: 22px; }
+  .panel-side { width: 320px; flex: none; border-left: 1px solid var(--border); background: var(--subtle); padding: 22px; }
+  @media (max-width: 900px) { .panel { flex-direction: column; } .panel-side { width: auto; border-left: none; border-top: 1px solid var(--border); } }
+
+  .panel-heading { display: flex; align-items: center; gap: 16px; margin-bottom: 18px; }
+  .panel-heading h2 { margin: 0; font-size: 20px; font-weight: 700; }
+  .panel-heading .text-low { font-weight: 500; }
+
+  .table-header, .table-row {
+    display: grid; grid-template-columns: 2fr 1fr 1.4fr; gap: 12px; align-items: center;
+  }
+  .table-header {
+    padding: 0 10px 10px; font-family: var(--font-mono); font-size: 11px; color: var(--text-low);
+    letter-spacing: 0.05em; border-bottom: 1px solid var(--border);
+  }
+  .table-row { padding: 13px 10px; border-bottom: 1px solid var(--subtle); }
+  .table-row.is-inactive { background: #fafbfd; opacity: 0.7; }
+  .row-dispatcher { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .row-dispatcher .name { font-size: 14px; font-weight: 600; }
+  .row-dispatcher .code { font-family: var(--font-mono); font-size: 11px; color: var(--text-low); }
+  .row-dispatcher .you-tag { font-family: var(--font-mono); font-size: 10px; color: var(--accent); margin-left: 6px; }
+
+  .row-error { grid-column: 1 / -1; font-size: 12px; color: var(--disconnected-text); margin-top: 6px; }
+  .row-error.hidden { display: none; }
+  .reset-pw-inline { display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+  .reset-pw-inline .input { width: 120px; height: 30px; padding: 0 6px; font-size: 12px; }
+
+  .field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 16px; }
+  .field label { font-family: var(--font-mono); font-size: 11px; color: var(--text-mid); letter-spacing: 0.05em; }
+  .form-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+
+  #addError.hidden { display: none; }
+  #addError { background: var(--disconnected-bg); border: 1px solid var(--disconnected-border); color: var(--disconnected-text); font-size: 13px; border-radius: 10px; padding: 10px 12px; margin-top: 12px; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><div class="brand-mark"></div><span class="brand-name">OSDispatch</span></div>
+  <h1 style="font-size:16px;font-weight:700;margin:0 0 0 12px;">Dispatcher Management</h1>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:16px;">
+    <a href="/dispatch" class="btn-link">Back to Dashboard</a>
+    <button id="logoutBtn" class="btn-link">Log out</button>
+  </div>
+</header>
+
+<div class="page-wrap">
+  <div class="card panel">
+    <div class="panel-main">
+      <div class="panel-heading">
+        <h2>Dispatchers <span id="dispatcherCount" class="text-low"></span></h2>
+        <div style="margin-left:auto;display:flex;gap:8px;font-family:var(--font-mono);font-size:12px;">
+          <span id="activeCount" class="badge badge-active"></span>
+          <span id="inactiveCount" class="badge badge-ended"></span>
+        </div>
+      </div>
+
+      <div class="table-header">
+        <span>DISPATCHER</span><span>STATE</span><span style="text-align:right;">ACTIONS</span>
+      </div>
+      <div id="dispatcherTable"></div>
+      <p id="emptyState" class="empty-state hidden" style="padding:16px 10px;color:var(--text-low);font-size:13px;">No dispatchers yet — add one on the right.</p>
+    </div>
+
+    <div class="panel-side">
+      <h3 style="margin:0 0 4px;font-size:18px;font-weight:700;">Add dispatcher</h3>
+      <p style="margin:0 0 20px;font-size:13px;color:var(--text-mid);line-height:1.45;">Creates a dashboard login for a new dispatcher.</p>
+      <form id="addForm">
+        <div class="field">
+          <label>FULL NAME</label>
+          <input id="newDisplayName" type="text" class="input" required />
+        </div>
+        <div class="field">
+          <label>USERNAME</label>
+          <input id="newUsername" type="text" class="input" required autocomplete="off" />
+        </div>
+        <div class="field">
+          <label>PASSWORD</label>
+          <input id="newPassword" type="text" class="input input-mono" required minlength="8" autocomplete="new-password" />
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-success">Add dispatcher</button>
+        </div>
+        <div id="addError" class="hidden"></div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const dispatcherTable = document.getElementById('dispatcherTable');
+  const emptyState = document.getElementById('emptyState');
+  const addForm = document.getElementById('addForm');
+  const addError = document.getElementById('addError');
+  let currentUserId = null;
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+  }
+
+  function initials(name) {
+    const parts = String(name).trim().split(/\s+/);
+    return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || '?';
+  }
+
+  function hueForDispatcher(id) {
+    let hash = 0;
+    const s = String(id);
+    for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+    return hash % 360;
+  }
+
+  document.getElementById('logoutBtn').addEventListener('click', async () => {
+    await fetch('/api/logout', { method: 'POST' });
+    window.location.href = '/login';
+  });
+
+  async function loadDispatchers() {
+    const res = await fetch('/api/dispatchers');
+    if (res.status === 401 || res.status === 403) {
+      window.location.href = '/login';
+      return;
+    }
+    const dispatchers = await res.json();
+    renderDispatchers(dispatchers);
+  }
+
+  function renderDispatchers(dispatchers) {
+    emptyState.classList.toggle('hidden', dispatchers.length > 0);
+    dispatcherTable.innerHTML = '';
+    document.getElementById('dispatcherCount').textContent = dispatchers.length;
+    const activeN = dispatchers.filter((d) => d.active).length;
+    document.getElementById('activeCount').textContent = `${activeN} active`;
+    document.getElementById('inactiveCount').textContent = `${dispatchers.length - activeN} inactive`;
+
+    dispatchers.forEach((dispatcher) => {
+      const isSelf = dispatcher.id === currentUserId;
+      const row = document.createElement('div');
+      row.className = 'table-row' + (dispatcher.active ? '' : ' is-inactive');
+      const hue = hueForDispatcher(dispatcher.id);
+      row.innerHTML = `
+        <div class="row-dispatcher">
+          <div class="avatar avatar-sm" style="background:hsl(${hue},70%,50%)">${initials(dispatcher.displayName)}</div>
+          <div>
+            <div class="name">${escapeHtml(dispatcher.displayName)}${isSelf ? '<span class="you-tag">YOU</span>' : ''}</div>
+            <div class="code">${escapeHtml(dispatcher.username)}</div>
+          </div>
+        </div>
+        <span class="badge ${dispatcher.active ? 'badge-active' : 'badge-ended'}">${dispatcher.active ? 'Active' : 'Inactive'}</span>
+        <div class="reset-pw-inline">
+          <input type="text" placeholder="New password" class="input password-input" autocomplete="new-password" />
+          <button class="btn-link reset-pw-btn">Reset password</button>
+          <button class="btn-link toggle-active-btn" ${isSelf ? 'disabled title="You cannot deactivate your own account."' : ''} style="color:${dispatcher.active ? 'var(--disconnected-text)' : 'var(--active-text)'};">
+            ${dispatcher.active ? 'Remove' : 'Restore'}
+          </button>
+        </div>
+        <div class="row-error hidden"></div>
+      `;
+
+      const rowError = row.querySelector('.row-error');
+      function showRowError(message) {
+        rowError.textContent = message;
+        rowError.classList.remove('hidden');
+      }
+
+      row.querySelector('.reset-pw-btn').addEventListener('click', async () => {
+        const passwordInput = row.querySelector('.password-input');
+        const password = passwordInput.value;
+        if (password.length < 8) {
+          showRowError('Enter a password of at least 8 characters to reset.');
+          return;
+        }
+        const res = await fetch(`/api/dispatchers/${dispatcher.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          showRowError(body.error || 'Failed to reset password.');
+          return;
+        }
+        passwordInput.value = '';
+        rowError.classList.add('hidden');
+        loadDispatchers();
+      });
+
+      row.querySelector('.toggle-active-btn').addEventListener('click', async () => {
+        if (isSelf) return;
+        const res = await fetch(`/api/dispatchers/${dispatcher.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ active: !dispatcher.active }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          showRowError(body.error || 'Failed to update dispatcher.');
+          return;
+        }
+        loadDispatchers();
+      });
+
+      dispatcherTable.appendChild(row);
+    });
+  }
+
+  addForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    addError.classList.add('hidden');
+
+    const username = document.getElementById('newUsername').value.trim();
+    const displayName = document.getElementById('newDisplayName').value.trim();
+    const password = document.getElementById('newPassword').value;
+
+    const res = await fetch('/api/dispatchers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, displayName, password }),
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      addError.textContent = body.error || 'Failed to add dispatcher.';
+      addError.classList.remove('hidden');
+      return;
+    }
+
+    addForm.reset();
+    loadDispatchers();
+  });
+
+  async function init() {
+    const res = await fetch('/api/me');
+    if (!res.ok) {
+      window.location.href = '/login';
+      return;
+    }
+    const user = await res.json();
+    if (user.role !== 'dispatcher') {
+      window.location.href = '/login';
+      return;
+    }
+    currentUserId = user.id;
+    loadDispatchers();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
