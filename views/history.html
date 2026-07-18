@@ -127,6 +127,7 @@
             <div id="playbackTicks" class="playback-ticks"></div>
           </div>
           <span class="playback-time"><span id="currentTimeLabel">—</span> / <span id="totalTimeLabel">—</span></span>
+          <span class="playback-time" id="playbackSpeedLabel">— speed</span>
         </div>
       </div>
       <div id="eventsPanel" class="events-panel hidden">
@@ -191,7 +192,7 @@
   const SPEEDING_MARGIN_KMH = 8;
   // Wall-clock length of one full replay, regardless of how long the real
   // drive took — keeps playback watchable for both a 10-minute and 4-hour drive.
-  const PLAYBACK_DURATION_MS = 20_000;
+  const PLAYBACK_DURATION_MS = 35_000;
 
   function splitIntoSegments(points) {
     const segments = [];
@@ -232,6 +233,33 @@
       speedingCount: speedingPoints(points).length,
       pointCount: points.length,
     };
+  }
+
+  // Distance/duration/speed covered up through a given playback fraction —
+  // drives the live-updating DISTANCE/DURATION/SPEED readouts during replay.
+  // A single drive has no gap > HISTORY_GAP_MS by construction, so unlike
+  // computeStats() this doesn't need segment splitting.
+  function computePartialStats(points, fraction) {
+    if (points.length < 2) return { distanceKm: 0, durationMs: 0, speedKmh: null };
+    const t0 = new Date(points[0].recordedAt).getTime();
+    const t1 = new Date(points[points.length - 1].recordedAt).getTime();
+    const targetT = t0 + fraction * (t1 - t0);
+
+    let distanceKm = 0;
+    let i = 1;
+    while (i < points.length - 1 && new Date(points[i].recordedAt).getTime() < targetT) {
+      distanceKm += haversineKm(points[i - 1], points[i]);
+      i++;
+    }
+    const a = points[i - 1];
+    const b = points[i];
+    const ta = new Date(a.recordedAt).getTime();
+    const tb = new Date(b.recordedAt).getTime();
+    const segFrac = tb > ta ? Math.max(0, Math.min(1, (targetT - ta) / (tb - ta))) : 0;
+    distanceKm += haversineKm(a, b) * segFrac;
+    const speedKmh = typeof b.speedKmh === 'number' ? b.speedKmh : (typeof a.speedKmh === 'number' ? a.speedKmh : null);
+
+    return { distanceKm, durationMs: targetT - t0, speedKmh };
   }
 
   let routeLayers = [];
@@ -312,6 +340,7 @@
   const playbackTicks = document.getElementById('playbackTicks');
   const currentTimeLabel = document.getElementById('currentTimeLabel');
   const totalTimeLabel = document.getElementById('totalTimeLabel');
+  const playbackSpeedLabel = document.getElementById('playbackSpeedLabel');
 
   function playbackIcon() {
     return L.divIcon({
@@ -352,6 +381,11 @@
     const pos = interpolatePosition(playbackPoints, playbackFraction);
     if (playbackMarker) playbackMarker.setLatLng([pos.lat, pos.lng]);
     currentTimeLabel.textContent = formatTimeShort(pos.time);
+
+    const partial = computePartialStats(playbackPoints, playbackFraction);
+    document.getElementById('summaryDistance').textContent = formatDistance(partial.distanceKm);
+    document.getElementById('summaryDuration').textContent = formatDuration(partial.durationMs);
+    playbackSpeedLabel.textContent = formatSpeed(partial.speedKmh) + ' speed';
   }
 
   function playbackTick(now) {
