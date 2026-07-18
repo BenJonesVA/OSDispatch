@@ -22,6 +22,9 @@
   .filter-field { display: flex; flex-direction: column; gap: 6px; }
   .filter-field label { font-family: var(--font-mono); font-size: 11px; color: var(--text-mid); letter-spacing: 0.05em; }
   .filter-field select, .filter-field input { height: 38px; }
+  .filter-field.time-field input { width: 110px; }
+  .filter-field.drive-field { min-width: 220px; }
+  .filter-field.drive-field.hidden { display: none; }
 
   .stat-bar { display: grid; grid-template-columns: repeat(5, 1fr); border-bottom: 1px solid var(--border); background: var(--card); }
   .stat-bar.hidden { display: none; }
@@ -38,7 +41,7 @@
   .events-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
   .events-heading h3 { margin: 0; font-size: 15px; font-weight: 700; }
   .events-count { margin-left: auto; font-family: var(--font-mono); font-size: 12px; color: var(--speeding-text); background: var(--speeding-bg); padding: 2px 9px; border-radius: 999px; font-weight: 500; }
-  .event-card { border: 1px solid var(--speeding-border); background: #fffaf0; border-left: 3px solid var(--speeding); border-radius: 10px; padding: 12px 13px; margin-bottom: 10px; }
+  .event-card { border: 1px solid var(--speeding-border); background: #fffaf0; border-left: 3px solid var(--speeding); border-radius: 10px; padding: 12px 13px; margin-bottom: 10px; cursor: pointer; }
   .event-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
   .event-speed { font-size: 14px; font-weight: 700; color: var(--speeding-text); }
   .event-speed .limit { font-size: 11px; font-weight: 500; color: var(--text-low); }
@@ -47,6 +50,19 @@
 
   #statusMessage { font-size: 13px; color: var(--text-mid); padding: 10px 20px; }
   #statusMessage.hidden { display: none; }
+
+  .playback-bar {
+    position: absolute; bottom: 16px; left: 16px; right: 16px; z-index: 500;
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 16px; box-shadow: var(--shadow-hover); display: flex; align-items: center; gap: 14px;
+  }
+  .playback-bar.hidden { display: none; }
+  .playback-btn { width: 36px; height: 36px; border: none; border-radius: 9px; background: var(--accent); color: #fff; font-size: 14px; cursor: pointer; flex: none; display: flex; align-items: center; justify-content: center; }
+  .playback-track { flex: 1; position: relative; height: 16px; display: flex; align-items: center; }
+  .playback-track input[type="range"] { width: 100%; margin: 0; accent-color: var(--accent); }
+  .playback-ticks { position: absolute; left: 0; right: 0; top: 1px; height: 14px; pointer-events: none; }
+  .playback-tick { position: absolute; top: 0; width: 4px; height: 14px; border-radius: 2px; background: var(--speeding); }
+  .playback-time { font-family: var(--font-mono); font-size: 12px; color: var(--text-mid); flex: none; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -71,11 +87,24 @@
         <label>FROM</label>
         <input id="fromDate" type="date" required class="input" />
       </div>
+      <div class="filter-field time-field">
+        <label>FROM TIME</label>
+        <input id="fromTime" type="time" required class="input input-mono" value="00:00" />
+      </div>
       <div class="filter-field">
         <label>TO</label>
         <input id="toDate" type="date" required class="input" />
       </div>
-      <button type="submit" class="btn btn-primary" style="margin-left:auto;">Apply</button>
+      <div class="filter-field time-field">
+        <label>TO TIME</label>
+        <input id="toTime" type="time" required class="input input-mono" value="23:59" />
+      </div>
+      <button type="submit" class="btn btn-primary">Apply</button>
+
+      <div class="filter-field drive-field hidden" id="driveField">
+        <label>DRIVE</label>
+        <select id="driveSelect" class="input"></select>
+      </div>
     </form>
 
     <div id="statTable" class="stat-bar hidden">
@@ -91,6 +120,14 @@
     <div class="body-split">
       <div class="map-wrapper">
         <div id="map"></div>
+        <div id="playbackBar" class="playback-bar hidden">
+          <button type="button" id="playPauseBtn" class="playback-btn">▶</button>
+          <div class="playback-track">
+            <input type="range" id="scrubber" min="0" max="1000" value="0" />
+            <div id="playbackTicks" class="playback-ticks"></div>
+          </div>
+          <span class="playback-time"><span id="currentTimeLabel">—</span> / <span id="totalTimeLabel">—</span></span>
+        </div>
       </div>
       <div id="eventsPanel" class="events-panel hidden">
         <div class="events-heading">
@@ -128,25 +165,33 @@
     const m = totalMin % 60;
     return h > 0 ? `${h}h ${m}m` : `${m}m`;
   }
+  function formatTimeShort(ms) {
+    return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  // Great-circle distance in km — mirrors the server's haversineDistanceKm
+  // (server.js) so client-computed per-drive stats match the server's.
+  function haversineKm(a, b) {
+    const R = 6371;
+    const toRad = (deg) => (deg * Math.PI) / 180;
+    const dLat = toRad(b.latitude - a.latitude);
+    const dLon = toRad(b.longitude - a.longitude);
+    const lat1 = toRad(a.latitude);
+    const lat2 = toRad(b.latitude);
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+  }
 
   // Matches the server's HISTORY_GAP_MS: a gap this long means the
-  // connection dropped for a real stretch, not just a missed ping, so the
-  // route is drawn as separate segments instead of one continuous line
-  // bridging an unknown path, and that gap is excluded from duration too.
+  // connection dropped for a real stretch, not just a missed ping — it's
+  // also what separates one "drive" from the next within a day.
   const HISTORY_GAP_MS = 90_000;
   // Small buffer above the posted limit before a point is flagged, so
   // ordinary GPS/sensor noise around the limit doesn't read as speeding.
   const SPEEDING_MARGIN_KMH = 8;
-
-  let routeLayers = [];
-  let speedMarkers = [];
-
-  function clearRoute() {
-    routeLayers.forEach((layer) => map.removeLayer(layer));
-    routeLayers = [];
-    speedMarkers.forEach((marker) => map.removeLayer(marker));
-    speedMarkers = [];
-  }
+  // Wall-clock length of one full replay, regardless of how long the real
+  // drive took — keeps playback watchable for both a 10-minute and 4-hour drive.
+  const PLAYBACK_DURATION_MS = 20_000;
 
   function splitIntoSegments(points) {
     const segments = [];
@@ -165,6 +210,38 @@
   function speedingPoints(points) {
     return points.filter((p) => typeof p.speedKmh === 'number' && typeof p.speedLimitKmh === 'number'
       && p.speedKmh > p.speedLimitKmh + SPEEDING_MARGIN_KMH);
+  }
+
+  // Distance/duration/speed stats recomputed client-side from raw points so
+  // the exact same logic works whether "points" is the whole fetched range
+  // (possibly spanning several drives) or a single selected drive.
+  function computeStats(points) {
+    const segments = splitIntoSegments(points);
+    let distanceKm = 0;
+    let durationMs = 0;
+    segments.forEach((seg) => {
+      for (let i = 1; i < seg.length; i++) distanceKm += haversineKm(seg[i - 1], seg[i]);
+      if (seg.length >= 2) durationMs += new Date(seg[seg.length - 1].recordedAt) - new Date(seg[0].recordedAt);
+    });
+    const knownSpeeds = points.map((p) => p.speedKmh).filter((s) => typeof s === 'number');
+    return {
+      distanceKm,
+      durationMs,
+      avgSpeedKmh: knownSpeeds.length ? knownSpeeds.reduce((a, b) => a + b, 0) / knownSpeeds.length : null,
+      maxSpeedKmh: knownSpeeds.length ? Math.max(...knownSpeeds) : null,
+      speedingCount: speedingPoints(points).length,
+      pointCount: points.length,
+    };
+  }
+
+  let routeLayers = [];
+  let speedMarkers = [];
+
+  function clearRoute() {
+    routeLayers.forEach((layer) => map.removeLayer(layer));
+    routeLayers = [];
+    speedMarkers.forEach((marker) => map.removeLayer(marker));
+    speedMarkers = [];
   }
 
   function renderRoute(points) {
@@ -205,8 +282,8 @@
 
     eventsPanel.classList.toggle('hidden', events.length === 0);
     eventsCount.textContent = events.length;
-    eventsList.innerHTML = events.map((p) => `
-      <div class="event-card">
+    eventsList.innerHTML = events.map((p, i) => `
+      <div class="event-card" data-index="${i}">
         <div class="event-top">
           <span class="event-speed">${formatSpeed(p.speedKmh)} <span class="limit">/ ${formatSpeed(p.speedLimitKmh)}</span></span>
           <span class="event-time">${new Date(p.recordedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
@@ -214,7 +291,196 @@
         <div class="event-loc">${p.latitude.toFixed(4)}, ${p.longitude.toFixed(4)}</div>
       </div>
     `).join('');
+    Array.from(eventsList.children).forEach((card, i) => {
+      card.addEventListener('click', () => map.panTo([events[i].latitude, events[i].longitude]));
+    });
   }
+
+  // --- Replay / playback -----------------------------------------------
+
+  let playbackPoints = [];
+  let playbackMarker = null;
+  let playbackFraction = 0;
+  let playing = false;
+  let playbackStartWallClock = 0;
+  let playbackStartFraction = 0;
+  let rafId = null;
+
+  const playbackBar = document.getElementById('playbackBar');
+  const playPauseBtn = document.getElementById('playPauseBtn');
+  const scrubber = document.getElementById('scrubber');
+  const playbackTicks = document.getElementById('playbackTicks');
+  const currentTimeLabel = document.getElementById('currentTimeLabel');
+  const totalTimeLabel = document.getElementById('totalTimeLabel');
+
+  function playbackIcon() {
+    return L.divIcon({
+      className: '', iconSize: [18, 18], iconAnchor: [9, 9],
+      html: '<div style="width:16px;height:16px;border-radius:50%;background:#4f6bff;border:3px solid #fff;box-shadow:0 2px 6px rgba(26,33,48,.35);"></div>',
+    });
+  }
+
+  function interpolatePosition(points, fraction) {
+    const t0 = new Date(points[0].recordedAt).getTime();
+    const t1 = new Date(points[points.length - 1].recordedAt).getTime();
+    const targetT = t0 + fraction * (t1 - t0);
+    let i = 1;
+    while (i < points.length - 1 && new Date(points[i].recordedAt).getTime() < targetT) i++;
+    const a = points[i - 1];
+    const b = points[i];
+    const ta = new Date(a.recordedAt).getTime();
+    const tb = new Date(b.recordedAt).getTime();
+    const segFrac = tb > ta ? Math.max(0, Math.min(1, (targetT - ta) / (tb - ta))) : 0;
+    return {
+      lat: a.latitude + (b.latitude - a.latitude) * segFrac,
+      lng: a.longitude + (b.longitude - a.longitude) * segFrac,
+      time: targetT,
+    };
+  }
+
+  function pausePlayback() {
+    playing = false;
+    playPauseBtn.textContent = '▶';
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = null;
+  }
+
+  function setPlaybackFraction(f) {
+    playbackFraction = Math.max(0, Math.min(1, f));
+    scrubber.value = String(Math.round(playbackFraction * 1000));
+    if (!playbackPoints.length) return;
+    const pos = interpolatePosition(playbackPoints, playbackFraction);
+    if (playbackMarker) playbackMarker.setLatLng([pos.lat, pos.lng]);
+    currentTimeLabel.textContent = formatTimeShort(pos.time);
+  }
+
+  function playbackTick(now) {
+    if (!playing) return;
+    const elapsed = now - playbackStartWallClock;
+    let f = playbackStartFraction + elapsed / PLAYBACK_DURATION_MS;
+    if (f >= 1) {
+      setPlaybackFraction(1);
+      pausePlayback();
+      return;
+    }
+    setPlaybackFraction(f);
+    rafId = requestAnimationFrame(playbackTick);
+  }
+
+  function startPlayback() {
+    if (!playbackPoints.length) return;
+    if (playbackFraction >= 1) playbackFraction = 0;
+    playing = true;
+    playPauseBtn.textContent = '⏸';
+    playbackStartWallClock = performance.now();
+    playbackStartFraction = playbackFraction;
+    rafId = requestAnimationFrame(playbackTick);
+  }
+
+  playPauseBtn.addEventListener('click', () => {
+    if (playing) pausePlayback();
+    else startPlayback();
+  });
+
+  scrubber.addEventListener('input', () => {
+    pausePlayback();
+    setPlaybackFraction(Number(scrubber.value) / 1000);
+  });
+
+  function setupPlayback(points) {
+    pausePlayback();
+    if (playbackMarker) { map.removeLayer(playbackMarker); playbackMarker = null; }
+    playbackTicks.innerHTML = '';
+
+    if (points.length < 2) {
+      playbackBar.classList.add('hidden');
+      playbackPoints = [];
+      return;
+    }
+
+    playbackBar.classList.remove('hidden');
+    playbackPoints = points;
+    playbackFraction = 0;
+
+    const t0 = new Date(points[0].recordedAt).getTime();
+    const t1 = new Date(points[points.length - 1].recordedAt).getTime();
+    totalTimeLabel.textContent = formatTimeShort(t1);
+
+    speedingPoints(points).forEach((p) => {
+      const frac = t1 > t0 ? (new Date(p.recordedAt).getTime() - t0) / (t1 - t0) : 0;
+      const tick = document.createElement('div');
+      tick.className = 'playback-tick';
+      tick.style.left = `calc(${(frac * 100).toFixed(2)}% - 2px)`;
+      playbackTicks.appendChild(tick);
+    });
+
+    playbackMarker = L.marker([points[0].latitude, points[0].longitude], { icon: playbackIcon() }).addTo(map);
+    setPlaybackFraction(0);
+  }
+
+  // --- Drive detection ---------------------------------------------------
+  // A "drive" is a contiguous run of pings with no gap bigger than
+  // HISTORY_GAP_MS — the same boundary already used to break the route and
+  // exclude cross-gap distance. A dispatcher can then look at one drive out
+  // of several the same driver made in a day, instead of only whole-day
+  // aggregates.
+
+  let currentPoints = [];
+  let drives = [];
+  let activeDriveIndex = 'all';
+
+  const driveField = document.getElementById('driveField');
+  const driveSelect = document.getElementById('driveSelect');
+
+  function getActivePoints() {
+    return activeDriveIndex === 'all' ? currentPoints : drives[activeDriveIndex];
+  }
+
+  function activeIsSingleDrive() {
+    return activeDriveIndex !== 'all' || drives.length <= 1;
+  }
+
+  function renderActive() {
+    const points = getActivePoints();
+    const stats = computeStats(points);
+
+    document.getElementById('summaryDistance').textContent = formatDistance(stats.distanceKm);
+    document.getElementById('summaryDuration').textContent = formatDuration(stats.durationMs);
+    document.getElementById('summaryAvgSpeed').textContent = formatSpeed(stats.avgSpeedKmh);
+    document.getElementById('summaryMaxSpeed').textContent = formatSpeed(stats.maxSpeedKmh);
+    document.getElementById('summarySpeeding').textContent = stats.speedingCount;
+    document.getElementById('statTable').classList.remove('hidden');
+
+    renderRoute(points);
+    renderEventsList(points);
+    setupPlayback(activeIsSingleDrive() ? points : []);
+  }
+
+  function populateDriveSelect() {
+    drives = splitIntoSegments(currentPoints).filter((seg) => seg.length > 0);
+    activeDriveIndex = 'all';
+
+    if (drives.length <= 1) {
+      driveField.classList.add('hidden');
+      driveSelect.innerHTML = '';
+      return;
+    }
+
+    driveField.classList.remove('hidden');
+    const options = [`<option value="all">All (${drives.length} drives)</option>`];
+    drives.forEach((drive, i) => {
+      const start = formatTimeShort(new Date(drive[0].recordedAt).getTime());
+      const end = formatTimeShort(new Date(drive[drive.length - 1].recordedAt).getTime());
+      const stats = computeStats(drive);
+      options.push(`<option value="${i}">Drive ${i + 1} · ${start}–${end} (${formatDistance(stats.distanceKm)})</option>`);
+    });
+    driveSelect.innerHTML = options.join('');
+  }
+
+  driveSelect.addEventListener('change', () => {
+    activeDriveIndex = driveSelect.value === 'all' ? 'all' : Number(driveSelect.value);
+    renderActive();
+  });
 
   function showStatus(message) {
     const el = document.getElementById('statusMessage');
@@ -226,6 +492,8 @@
   const driverSelect = document.getElementById('driverSelect');
   const fromDate = document.getElementById('fromDate');
   const toDate = document.getElementById('toDate');
+  const fromTime = document.getElementById('fromTime');
+  const toTime = document.getElementById('toTime');
   const statTable = document.getElementById('statTable');
 
   document.getElementById('logoutBtn').addEventListener('click', async () => {
@@ -235,8 +503,8 @@
 
   async function loadDrivers() {
     const res = await fetch('/api/drivers');
-    const drivers = await res.json();
-    driverSelect.innerHTML = drivers
+    const driversList = await res.json();
+    driverSelect.innerHTML = driversList
       .map((d) => `<option value="${d.id}">${escapeHtml(d.displayName)} (${escapeHtml(d.code)})</option>`)
       .join('');
   }
@@ -251,12 +519,14 @@
     e.preventDefault();
     statTable.classList.add('hidden');
     document.getElementById('eventsPanel').classList.add('hidden');
+    driveField.classList.add('hidden');
+    setupPlayback([]);
     showStatus('Loading…');
     clearRoute();
 
     const driverId = driverSelect.value;
-    const from = `${fromDate.value}T00:00:00`;
-    const to = `${toDate.value}T23:59:59.999`;
+    const from = `${fromDate.value}T${fromTime.value}:00`;
+    const to = `${toDate.value}T${toTime.value}:59.999`;
 
     const res = await fetch(`/api/history?driverId=${encodeURIComponent(driverId)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
     if (!res.ok) {
@@ -272,20 +542,9 @@
     }
 
     showStatus('');
-    const durationMs = splitIntoSegments(data.points).reduce((sum, seg) => {
-      if (seg.length < 2) return sum;
-      return sum + (new Date(seg[seg.length - 1].recordedAt) - new Date(seg[0].recordedAt));
-    }, 0);
-
-    document.getElementById('summaryDistance').innerHTML = formatDistance(data.summary.distanceKm);
-    document.getElementById('summaryDuration').textContent = formatDuration(durationMs);
-    document.getElementById('summaryAvgSpeed').textContent = formatSpeed(data.summary.avgSpeedKmh);
-    document.getElementById('summaryMaxSpeed').textContent = formatSpeed(data.summary.maxSpeedKmh);
-    document.getElementById('summarySpeeding').textContent = speedingPoints(data.points).length;
-    statTable.classList.remove('hidden');
-
-    renderRoute(data.points);
-    renderEventsList(data.points);
+    currentPoints = data.points;
+    populateDriveSelect();
+    renderActive();
   });
 
   async function init() {
