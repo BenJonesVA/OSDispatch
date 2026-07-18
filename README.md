@@ -1,4 +1,4 @@
-# Dispatch Tracker
+# OSDispatch
 
 Real-time driver dispatch and tracking system. Drivers open a mobile webpage (no
 native app), grant location permission, and stream their coordinates to a

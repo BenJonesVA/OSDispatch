@@ -30,5 +30,10 @@ CREATE TABLE IF NOT EXISTS location_pings (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Instantaneous speed at this ping (km/h), computed server-side the same way
+-- as the live dashboard telemetry. Nullable: pings recorded before this
+-- column existed have no historical speed and are never backfilled.
+ALTER TABLE location_pings ADD COLUMN IF NOT EXISTS speed_kmh DOUBLE PRECISION;
+
 CREATE INDEX IF NOT EXISTS idx_location_pings_user_id_recorded_at
   ON location_pings (user_id, recorded_at);

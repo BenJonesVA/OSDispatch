@@ -3,9 +3,15 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-<title>Driver — Dispatch Tracker</title>
+<title>Driver — OSDispatch</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="icon" href="data:," />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+<meta name="theme-color" content="#0f172a" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="OSDispatch" />
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col items-center px-4 py-8">
 
@@ -44,6 +50,15 @@
       <p class="font-semibold text-slate-300">Keep your screen on</p>
       <p>This page streams your location only while it's open and active. If your phone locks or the browser is backgrounded, tracking may pause. Keep the screen on and this tab in the foreground for the duration of your shift.</p>
     </div>
+
+    <div id="installBanner" class="hidden bg-sky-950 border border-sky-800 rounded-xl p-4 text-xs text-sky-100 space-y-2">
+      <p class="font-semibold">Add this to your home screen</p>
+      <p id="installText">Installing this page as an app makes it less likely to get closed by accident during a shift.</p>
+      <button id="installBtn" class="hidden w-full py-2 rounded-lg font-medium bg-sky-600 hover:bg-sky-500 active:bg-sky-700 transition-colors">
+        Install App
+      </button>
+      <button id="dismissInstallBtn" class="text-sky-300 hover:text-sky-100 underline">Dismiss</button>
+    </div>
   </div>
 
 <script src="/socket.io/socket.io.js"></script>
@@ -58,6 +73,10 @@
   const errorBanner = document.getElementById('errorBanner');
   const lastFixEl = document.getElementById('lastFix');
   const updateCountEl = document.getElementById('updateCount');
+  const installBanner = document.getElementById('installBanner');
+  const installText = document.getElementById('installText');
+  const installBtn = document.getElementById('installBtn');
+  const dismissInstallBtn = document.getElementById('dismissInstallBtn');
 
   let socket = null;
   let onShift = false;
@@ -193,6 +212,51 @@
     if (onShift) endShift();
     await fetch('/api/logout', { method: 'POST' });
     window.location.href = '/login';
+  });
+
+  // Registered only so the browser considers this page installable — see
+  // views/sw.js for why the service worker itself does nothing else.
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js', { scope: '/driver' }).catch(() => {});
+  }
+
+  const isStandalone =
+    window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const dismissed = localStorage.getItem('installBannerDismissed') === '1';
+
+  let deferredInstallPrompt = null;
+
+  if (!isStandalone && !dismissed) {
+    if (isIos) {
+      // iOS has no programmatic install prompt — Safari only supports this
+      // through the manual Share sheet, so just show the steps.
+      installText.textContent =
+        'Tap the Share icon in Safari, then "Add to Home Screen". Launching from the home screen icon is less likely to get closed by accident during a shift.';
+      installBanner.classList.remove('hidden');
+    } else {
+      // Android/Chrome: wait for the browser to confirm this is installable,
+      // then show our own button that triggers its native prompt.
+      window.addEventListener('beforeinstallprompt', (event) => {
+        event.preventDefault();
+        deferredInstallPrompt = event;
+        installBanner.classList.remove('hidden');
+        installBtn.classList.remove('hidden');
+      });
+    }
+  }
+
+  installBtn.addEventListener('click', async () => {
+    if (!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt = null;
+    installBanner.classList.add('hidden');
+  });
+
+  dismissInstallBtn.addEventListener('click', () => {
+    localStorage.setItem('installBannerDismissed', '1');
+    installBanner.classList.add('hidden');
   });
 
   async function init() {

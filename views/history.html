@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>History — OSDispatch</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="icon" href="data:," />
+<style>
+  html, body { height: 100%; margin: 0; }
+  #app-root { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+  .body-area { flex: 1 1 auto; display: flex; flex-direction: column; overflow: hidden; }
+  .map-wrapper { flex: 1 1 auto; position: relative; overflow: hidden; }
+  #map { width: 100%; height: 100%; }
+</style>
+</head>
+<body class="bg-slate-950 text-slate-100">
+
+<div id="app-root">
+  <header class="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-800 shrink-0">
+    <h1 class="text-lg font-bold">Driver History</h1>
+    <div class="flex items-center gap-3">
+      <a href="/dispatch" class="text-xs text-slate-400 hover:text-slate-200 underline">Back to Dashboard</a>
+      <button id="logoutBtn" class="text-xs text-slate-400 hover:text-slate-200 underline">Log out</button>
+    </div>
+  </header>
+
+  <div class="body-area">
+    <form id="filterForm" class="flex flex-wrap items-end gap-3 p-3 bg-slate-900 border-b border-slate-800 shrink-0">
+      <div>
+        <label class="block text-xs text-slate-400 mb-1">Driver</label>
+        <select id="driverSelect" required
+          class="rounded-lg bg-slate-700 border border-slate-600 px-3 py-2 text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500">
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-400 mb-1">From</label>
+        <input id="fromDate" type="date" required
+          class="rounded-lg bg-slate-700 border border-slate-600 px-3 py-2 text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-400 mb-1">To</label>
+        <input id="toDate" type="date" required
+          class="rounded-lg bg-slate-700 border border-slate-600 px-3 py-2 text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500" />
+      </div>
+      <button type="submit"
+        class="py-2 px-4 rounded-lg font-semibold bg-sky-600 hover:bg-sky-500 active:bg-sky-700 transition-colors">
+        Load History
+      </button>
+
+      <div id="summary" class="hidden flex flex-wrap items-center gap-4 ml-auto text-sm text-slate-300">
+        <span>Points: <span id="summaryPoints" class="font-semibold text-slate-100"></span></span>
+        <span>Distance: <span id="summaryDistance" class="font-semibold text-slate-100"></span></span>
+        <span>Avg speed: <span id="summaryAvgSpeed" class="font-semibold text-slate-100"></span></span>
+        <span>Max speed: <span id="summaryMaxSpeed" class="font-semibold text-slate-100"></span></span>
+      </div>
+    </form>
+
+    <div id="statusMessage" class="hidden text-sm text-slate-400 px-3 py-2"></div>
+
+    <div class="map-wrapper">
+      <div id="map"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const map = L.map('map', { zoomControl: true }).setView([39.5, -98.35], 4);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+    maxZoom: 19,
+  }).addTo(map);
+
+  let units = 'metric';
+  function formatDistance(km) {
+    if (units === 'imperial') return (km * 0.621371).toFixed(2) + ' mi';
+    return km.toFixed(2) + ' km';
+  }
+  function formatSpeed(kmh) {
+    if (kmh === null || kmh === undefined) return 'n/a';
+    if (units === 'imperial') return (kmh * 0.621371).toFixed(1) + ' mph';
+    return kmh.toFixed(1) + ' km/h';
+  }
+
+  let routeOutline = null;
+  let routeAccent = null;
+
+  function clearRoute() {
+    if (routeOutline) { map.removeLayer(routeOutline); routeOutline = null; }
+    if (routeAccent) { map.removeLayer(routeAccent); routeAccent = null; }
+  }
+
+  function renderRoute(points) {
+    clearRoute();
+    if (points.length < 2) return;
+    const latlngs = points.map((p) => [p.latitude, p.longitude]);
+    routeOutline = L.polyline(latlngs, { color: '#ffffff', weight: 7, opacity: 0.7 }).addTo(map);
+    routeAccent = L.polyline(latlngs, { color: '#38bdf8', weight: 4, opacity: 0.9 }).addTo(map);
+    map.fitBounds(routeOutline.getBounds(), { padding: [40, 40] });
+  }
+
+  function showStatus(message) {
+    const el = document.getElementById('statusMessage');
+    el.textContent = message;
+    el.classList.toggle('hidden', !message);
+  }
+
+  const filterForm = document.getElementById('filterForm');
+  const driverSelect = document.getElementById('driverSelect');
+  const fromDate = document.getElementById('fromDate');
+  const toDate = document.getElementById('toDate');
+  const summary = document.getElementById('summary');
+
+  document.getElementById('logoutBtn').addEventListener('click', async () => {
+    await fetch('/api/logout', { method: 'POST' });
+    window.location.href = '/login';
+  });
+
+  async function loadDrivers() {
+    const res = await fetch('/api/drivers');
+    const drivers = await res.json();
+    driverSelect.innerHTML = drivers
+      .map((d) => `<option value="${d.id}">${escapeHtml(d.displayName)} (${escapeHtml(d.code)})</option>`)
+      .join('');
+  }
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+  }
+
+  filterForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    summary.classList.add('hidden');
+    showStatus('Loading…');
+    clearRoute();
+
+    const driverId = driverSelect.value;
+    const from = `${fromDate.value}T00:00:00`;
+    const to = `${toDate.value}T23:59:59.999`;
+
+    const res = await fetch(`/api/history?driverId=${encodeURIComponent(driverId)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      showStatus(body.error || 'Failed to load history.');
+      return;
+    }
+
+    const data = await res.json();
+    if (!data.points.length) {
+      showStatus(`No location data for ${data.driver.displayName} in that range.`);
+      return;
+    }
+
+    showStatus('');
+    document.getElementById('summaryPoints').textContent = data.summary.pointCount;
+    document.getElementById('summaryDistance').textContent = formatDistance(data.summary.distanceKm);
+    document.getElementById('summaryAvgSpeed').textContent = formatSpeed(data.summary.avgSpeedKmh);
+    document.getElementById('summaryMaxSpeed').textContent = formatSpeed(data.summary.maxSpeedKmh);
+    summary.classList.remove('hidden');
+
+    renderRoute(data.points);
+  });
+
+  async function init() {
+    const meRes = await fetch('/api/me');
+    if (!meRes.ok) {
+      window.location.href = '/login';
+      return;
+    }
+    const user = await meRes.json();
+    if (user.role !== 'dispatcher') {
+      window.location.href = '/login';
+      return;
+    }
+
+    const configRes = await fetch('/api/config');
+    if (configRes.ok) {
+      const config = await configRes.json();
+      units = config.units === 'imperial' ? 'imperial' : 'metric';
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    fromDate.value = today;
+    toDate.value = today;
+
+    await loadDrivers();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

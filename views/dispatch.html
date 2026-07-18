@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Dispatch Dashboard</title>
+<title>Dashboard — OSDispatch</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -32,6 +32,10 @@
     70%  { transform: scale(2.2); opacity: 0; }
     100% { transform: scale(2.2); opacity: 0; }
   }
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
 </style>
 </head>
 <body class="bg-slate-950 text-slate-100">
@@ -43,6 +47,7 @@
       <span id="connState" class="text-xs px-2 py-1 rounded-full bg-slate-800 text-slate-400">connecting…</span>
       <span id="userBadge" class="text-xs text-slate-400"></span>
       <a href="/dispatch/drivers" class="text-xs text-slate-400 hover:text-slate-200 underline">Manage Drivers</a>
+      <a href="/dispatch/history" class="text-xs text-slate-400 hover:text-slate-200 underline">History</a>
       <button id="logoutBtn" class="text-xs text-slate-400 hover:text-slate-200 underline">Log out</button>
     </div>
   </header>
@@ -59,6 +64,8 @@
     </div>
   </div>
 </div>
+
+<div id="toastContainer" class="fixed top-4 right-4 space-y-2" style="z-index: 2000;"></div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
@@ -96,9 +103,14 @@
     return hue;
   }
 
-  function dotIcon(hue, { selected, ended } = {}) {
-    const color = `hsl(${hue}, 75%, 50%)`;
-    const ring = selected
+  function dotIcon(hue, { selected, status } = {}) {
+    const isDisconnected = status === 'disconnected';
+    const isEnded = status === 'ended';
+    // Disconnected always renders in alarm red, overriding the driver's own
+    // hue — this needs to catch the eye even before the dispatcher clicks it.
+    const color = isDisconnected ? '#ef4444' : `hsl(${hue}, 75%, 50%)`;
+    const showRing = selected || isDisconnected;
+    const ring = showRing
       ? `<div class="driver-pulse-ring" style="background:${color}"></div>`
       : '';
     return L.divIcon({
@@ -107,7 +119,7 @@
       iconAnchor: [8, 8],
       html: `<div style="position:relative;width:16px;height:16px">
                ${ring}
-               <div class="driver-dot${ended ? ' ended' : ''}" style="width:16px;height:16px;background:${color}"></div>
+               <div class="driver-dot${isEnded ? ' ended' : ''}" style="width:16px;height:16px;background:${color}"></div>
              </div>`,
     });
   }
@@ -171,7 +183,7 @@
     let entry = markers.get(driver.driverId);
     if (!entry) {
       const marker = L.marker(latlng, {
-        icon: dotIcon(hue, { selected: driver.driverId === selectedDriverId, ended: driver.status === 'ended' }),
+        icon: dotIcon(hue, { selected: driver.driverId === selectedDriverId, status: driver.status }),
       }).addTo(map);
       marker.on('click', () => selectDriver(driver.driverId));
       entry = { marker, outline: null, accent: null };
@@ -179,7 +191,7 @@
     } else {
       entry.marker.setLatLng(latlng);
       entry.marker.setIcon(
-        dotIcon(hue, { selected: driver.driverId === selectedDriverId, ended: driver.status === 'ended' })
+        dotIcon(hue, { selected: driver.driverId === selectedDriverId, status: driver.status })
       );
     }
 
@@ -206,6 +218,29 @@
 
   const driversById = new Map();
 
+  // driverId -> last known status, purely to detect the active -> disconnected
+  // transition client-side (the server doesn't push a distinct "just went
+  // silent" event, only the resulting status in a snapshot/update).
+  const previousStatus = new Map();
+
+  function showToast(message) {
+    const toastContainer = document.getElementById('toastContainer');
+    const toast = document.createElement('div');
+    toast.className = 'bg-red-800 text-red-50 text-sm px-4 py-2 rounded-lg shadow-lg border border-red-600';
+    toast.style.animation = 'toastIn 0.2s ease-out';
+    toast.textContent = message;
+    toastContainer.appendChild(toast);
+    setTimeout(() => toast.remove(), 8000);
+  }
+
+  function checkDisconnectTransition(driver) {
+    const prev = previousStatus.get(driver.driverId);
+    if (prev === 'active' && driver.status === 'disconnected') {
+      showToast(`⚠ ${driver.name} lost connection`);
+    }
+    previousStatus.set(driver.driverId, driver.status);
+  }
+
   function renderSidebar() {
     const listEl = document.getElementById('driverList');
     const emptyEl = document.getElementById('emptyState');
@@ -218,15 +253,21 @@
       .sort((a, b) => b.lastSeen - a.lastSeen)
       .forEach((driver) => {
         const hue = hueForDriver(driver.driverId);
+        const isDisconnected = driver.status === 'disconnected';
         const card = document.createElement('button');
         card.className = 'w-full text-left rounded-xl p-3 bg-slate-800 hover:bg-slate-700 transition-colors ' +
-          (driver.driverId === selectedDriverId ? 'ring-2 ring-sky-500' : '') +
-          (driver.status === 'ended' ? ' opacity-50' : '');
+          (driver.driverId === selectedDriverId ? 'ring-2 ring-sky-500 ' : '') +
+          (driver.status === 'ended' ? 'opacity-50 ' : '') +
+          (isDisconnected ? 'ring-2 ring-red-500' : '');
+        const statusCls = driver.status === 'active'
+          ? 'text-emerald-400'
+          : isDisconnected ? 'text-red-400 font-semibold' : 'text-slate-500';
+        const statusLabel = isDisconnected ? '⚠ disconnected' : driver.status;
         card.innerHTML = `
           <div class="flex items-center gap-2 mb-1">
             <span style="width:10px;height:10px;border-radius:50%;background:hsl(${hue},75%,50%)"></span>
             <span class="font-medium truncate">${escapeHtml(driver.name)}</span>
-            <span class="ml-auto text-xs ${driver.status === 'active' ? 'text-emerald-400' : 'text-slate-500'}">${driver.status}</span>
+            <span class="ml-auto text-xs ${statusCls}">${statusLabel}</span>
           </div>
           <div class="text-xs text-slate-400 grid grid-cols-2 gap-x-2">
             <span>Dist: ${formatDistance(driver.distanceKm)}</span>
@@ -246,12 +287,14 @@
   }
 
   function applyDriverUpdate(driver) {
+    checkDisconnectTransition(driver);
     driversById.set(driver.driverId, driver);
     upsertMarker(driver);
     renderSidebar();
   }
 
   function applySnapshot(driverArr) {
+    driverArr.forEach((driver) => checkDisconnectTransition(driver));
     driversById.clear();
     driverArr.forEach((driver) => driversById.set(driver.driverId, driver));
     driverArr.forEach((driver) => upsertMarker(driver));

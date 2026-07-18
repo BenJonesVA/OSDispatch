@@ -18,8 +18,11 @@ const PORT = process.env.PORT || 3000;
 
 // Breadcrumbs: how many recent points we keep per driver for trail/telemetry.
 const HISTORY_LENGTH = 10;
-// A driver with no update in this long is considered stale and dropped from the dashboard.
-const STALE_TIMEOUT_MS = 60_000;
+// A driver with no update in this long (well past the ~7s emit interval, so a
+// couple of missed beats don't false-positive) is considered silently
+// disconnected rather than having deliberately ended their shift.
+const STALE_TIMEOUT_MS = Number(process.env.STALE_TIMEOUT_MS) || 20_000;
+const STALE_SWEEP_INTERVAL_MS = 5_000;
 
 // Trust X-Forwarded-* headers from any private-network hop (Docker containers,
 // including a TLS-terminating proxy like Nginx Proxy Manager sitting in front
@@ -80,6 +83,21 @@ const sessionMiddleware = session({
   },
 });
 app.use(sessionMiddleware);
+
+// Public PWA assets — deliberately unauthenticated, since the browser's own
+// "Add to Home Screen" / install machinery fetches these directly and isn't
+// guaranteed to carry the session cookie the way a page's own fetch() calls do.
+app.get('/manifest.webmanifest', (req, res) => {
+  res.type('application/manifest+json');
+  res.sendFile(path.join(__dirname, 'views', 'manifest.webmanifest'));
+});
+
+app.get('/sw.js', (req, res) => {
+  res.type('application/javascript');
+  res.sendFile(path.join(__dirname, 'views', 'sw.js'));
+});
+
+app.use('/icons', express.static(path.join(__dirname, 'views', 'icons')));
 
 function requireRole(role) {
   return (req, res, next) => {
@@ -291,6 +309,64 @@ app.patch('/api/drivers/:id', requireRole('dispatcher'), async (req, res) => {
   });
 });
 
+app.get('/dispatch/history', requireRole('dispatcher'), (req, res) => {
+  res.sendFile(path.join(__dirname, 'views', 'history.html'));
+});
+
+app.get('/api/history', requireRole('dispatcher'), async (req, res) => {
+  const driverId = Number(req.query.driverId);
+  if (!Number.isInteger(driverId)) {
+    return res.status(400).json({ error: 'driverId is required.' });
+  }
+
+  const from = req.query.from ? new Date(req.query.from) : null;
+  const to = req.query.to ? new Date(req.query.to) : new Date();
+  if (!from || Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+    return res.status(400).json({ error: 'A valid from date (and optional to date) is required.' });
+  }
+
+  const driverResult = await pool.query(
+    `SELECT id, display_name FROM users WHERE id = $1 AND role = 'driver'`,
+    [driverId]
+  );
+  if (!driverResult.rows[0]) return res.status(404).json({ error: 'Driver not found.' });
+
+  const pingsResult = await pool.query(
+    `SELECT latitude, longitude, recorded_at, speed_kmh
+     FROM location_pings
+     WHERE user_id = $1 AND recorded_at BETWEEN $2 AND $3
+     ORDER BY recorded_at ASC`,
+    [driverId, from, to]
+  );
+
+  const points = pingsResult.rows.map((row) => ({
+    latitude: row.latitude,
+    longitude: row.longitude,
+    recordedAt: row.recorded_at,
+    speedKmh: row.speed_kmh,
+  }));
+
+  // Distance is recomputed from the raw historical points (not read from any
+  // stored total) so it reflects exactly the requested date range.
+  let distanceKm = 0;
+  for (let i = 1; i < points.length; i++) {
+    distanceKm += haversineDistanceKm(points[i - 1], points[i]);
+  }
+
+  // speed_kmh is null for any ping recorded before that column existed —
+  // excluded here rather than treated as 0, so old gaps don't drag the
+  // average down or hide a real max from before the gap.
+  const knownSpeeds = points.map((p) => p.speedKmh).filter((s) => typeof s === 'number');
+  const avgSpeedKmh = knownSpeeds.length ? knownSpeeds.reduce((a, b) => a + b, 0) / knownSpeeds.length : null;
+  const maxSpeedKmh = knownSpeeds.length ? Math.max(...knownSpeeds) : null;
+
+  res.json({
+    driver: { id: driverResult.rows[0].id, displayName: driverResult.rows[0].display_name },
+    points,
+    summary: { distanceKm, avgSpeedKmh, maxSpeedKmh, pointCount: points.length },
+  });
+});
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
@@ -306,7 +382,7 @@ app.get('/', (req, res) => {
  * live breadcrumbs/speed/distance without a DB round trip per tick.
  *
  * driverId -> {
- *   driverId, name, status: 'active' | 'ended',
+ *   driverId, name, status: 'active' | 'ended' | 'disconnected',
  *   history: [{ latitude, longitude, timestamp }, ...] (oldest first, capped at HISTORY_LENGTH),
  *   distanceKm, speedKmh, lastSeen
  * }
@@ -373,12 +449,12 @@ function broadcastSnapshot() {
   );
 }
 
-async function insertPing(userId, latitude, longitude, recordedAtMs) {
+async function insertPing(userId, latitude, longitude, recordedAtMs, speedKmh) {
   try {
     await pool.query(
-      `INSERT INTO location_pings (user_id, latitude, longitude, recorded_at)
-       VALUES ($1, $2, $3, to_timestamp($4 / 1000.0))`,
-      [userId, latitude, longitude, recordedAtMs]
+      `INSERT INTO location_pings (user_id, latitude, longitude, recorded_at, speed_kmh)
+       VALUES ($1, $2, $3, to_timestamp($4 / 1000.0), $5)`,
+      [userId, latitude, longitude, recordedAtMs, speedKmh]
     );
   } catch (err) {
     console.error('Failed to persist location ping:', err.message);
@@ -450,7 +526,7 @@ io.on('connection', (socket) => {
 
     io.to('dispatch').emit('driver_update', publicDriverState(driver));
 
-    insertPing(userSession.user.id, latitude, longitude, timestamp);
+    insertPing(userSession.user.id, latitude, longitude, timestamp, driver.speedKmh);
   });
 
   socket.on('end_shift', () => {
@@ -468,19 +544,20 @@ io.on('connection', (socket) => {
   });
 });
 
-// Periodically drop drivers that haven't reported in a while so the
-// dashboard doesn't show a stale marker forever after a phone goes offline.
+// Periodically flag drivers that have gone silent so the dashboard surfaces
+// a dropped connection distinctly from a driver who deliberately ended their
+// shift (see the 'disconnected' vs 'ended' status distinction below).
 setInterval(() => {
   const now = Date.now();
   let changed = false;
   for (const [driverId, driver] of drivers) {
     if (driver.status === 'active' && now - driver.lastSeen > STALE_TIMEOUT_MS) {
-      driver.status = 'ended';
+      driver.status = 'disconnected';
       changed = true;
     }
   }
   if (changed) broadcastSnapshot();
-}, 15_000);
+}, STALE_SWEEP_INTERVAL_MS);
 
 async function start() {
   await initSchema();

@@ -1,7 +1,7 @@
 {
-  "name": "dispatch-tracker",
+  "name": "osdispatch",
   "version": "1.0.0",
-  "description": "Real-time driver dispatch and tracking system (no native app required)",
+  "description": "OSDispatch — real-time driver dispatch and tracking system (no native app required)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
