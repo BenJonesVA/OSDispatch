@@ -5,6 +5,25 @@ native app), grant location permission, and stream their coordinates to a
 dispatcher dashboard over Socket.io. Built with Express, Socket.io, Leaflet,
 Postgres, and nginx, all run via Docker Compose.
 
+## Screenshots
+
+| | |
+|---|---|
+| **Sign in** — driver PIN / dispatcher password tabs | **Live dispatch dashboard** — fleet map with active driver markers |
+| ![Driver sign-in](docs/screenshots/01-login-driver.png) | ![Dispatch dashboard](docs/screenshots/03-dispatch-dashboard.png) |
+| **Driver check-in** — off shift / on shift | **Trip history** — replayable route with distance/speed stats |
+| ![Driver off shift](docs/screenshots/06-driver-off-shift.png) | ![Trip history](docs/screenshots/05-history.png) |
+
+<details>
+<summary>More screenshots (dispatcher sign-in, driver on shift, manage drivers)</summary>
+
+| | |
+|---|---|
+| ![Dispatcher sign-in](docs/screenshots/02-login-dispatcher.png) | ![Driver on shift](docs/screenshots/07-driver-on-shift.png) |
+| ![Manage drivers](docs/screenshots/04-manage-drivers.png) | |
+
+</details>
+
 ## Quick start
 
 ```bash
@@ -51,7 +70,9 @@ database.
   trails, and per-driver distance/speed. Requires a dispatcher login
   (username + password). Includes a **Manage Drivers** page
   (`/dispatch/drivers`) for creating, editing, deactivating/reactivating
-  drivers and resetting PINs.
+  drivers and resetting PINs, and a **Trip History** page
+  (`/dispatch/history`) for replaying a driver's route over a date/time
+  range, with distance/duration/speed summaries and flagged speeding events.
 
 ## Configuration
 
@@ -110,6 +131,7 @@ dispatch tracker/
 ├── Dockerfile             # app image (node:20-alpine)
 ├── nginx/default.conf     # reverse proxy + WebSocket upgrade config
 ├── server.js              # Express + Socket.io + auth + telemetry
+├── docs/screenshots/      # README screenshots
 ├── db/
 │   ├── schema.sql         # idempotent schema, runs on every boot
 │   ├── seed.js            # seeds users from seed-users.json (or the example)
@@ -118,5 +140,6 @@ dispatch tracker/
     ├── login.html         # driver PIN / dispatcher password tabs
     ├── driver.html         # driver check-in page
     ├── dispatch.html       # dispatcher map dashboard
-    └── drivers.html        # driver management (dispatcher-only)
+    ├── drivers.html        # driver management (dispatcher-only)
+    └── history.html        # per-driver trip history, route replay + speeding events
 ```
