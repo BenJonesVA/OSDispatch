@@ -65,14 +65,23 @@ Copy `.env.example` to `.env` and adjust as needed:
   computed and stored in km / km/h regardless of this setting; it only
   affects how the dispatch dashboard displays them.
 
+## TLS / hostname
+
+This nginx service terminates plain HTTP only — it's meant to sit behind a
+separate TLS-terminating reverse proxy (e.g. Nginx Proxy Manager) that owns
+the real hostname and certificate, and forwards to this stack's published
+port. The app detects HTTPS via the `X-Forwarded-Proto` header (see
+`nginx/default.conf`, which passes that header through rather than
+overwriting it) and adjusts session cookies and HSTS accordingly — no app
+config changes needed on this side when you add that proxy.
+
+**Browsers block the geolocation prompt entirely on non-`localhost`,
+non-HTTPS origins** — until a TLS-terminating proxy is actually in front of
+this, `/driver` will not be able to request location from a real phone, no
+matter what. `localhost` testing works either way.
+
 ## Known limitations
 
-- **Plain HTTP, no TLS.** nginx does not terminate HTTPS in this setup.
-  Browsers block the geolocation prompt on non-`localhost`, non-secure
-  origins, so `/driver` won't be able to request location from a real phone
-  over a plain-HTTP LAN address — only `localhost` testing works out of the
-  box. Add HTTPS (e.g. a reverse-proxy cert or a tunnel like ngrok) to test
-  from a real device.
 - **4-digit driver PINs** are a small keyspace (10,000 combinations). Login
   is rate-limited (10 attempts / 15 minutes per IP) to slow down brute-force
   guessing, but PINs are inherently weaker than passwords — treat driver

@@ -21,7 +21,11 @@ const HISTORY_LENGTH = 10;
 // A driver with no update in this long is considered stale and dropped from the dashboard.
 const STALE_TIMEOUT_MS = 60_000;
 
-app.set('trust proxy', 1); // running behind the nginx reverse proxy
+// Trust X-Forwarded-* headers from any private-network hop (Docker containers,
+// including a TLS-terminating proxy like Nginx Proxy Manager sitting in front
+// of our own nginx) rather than a fixed hop count, since the proxy chain
+// length can change independently of app code.
+app.set('trust proxy', 'loopback, linklocal, uniquelocal');
 
 app.use(
   helmet({
@@ -34,14 +38,18 @@ app.use(
         connectSrc: ["'self'", 'ws:', 'wss:'],
         // Helmet's default CSP includes this directive, which tells browsers to
         // silently rewrite http:// sub-resource requests (fetch/XHR/forms) to
-        // https:// — breaks every fetch() call on a deliberately plain-HTTP
-        // deployment like this one. Explicitly nulled out to disable it.
+        // https:// — breaks every fetch() call whenever this is reached directly
+        // over plain HTTP (e.g. local testing without a TLS proxy in front).
+        // Left disabled permanently: it adds no real protection here (nothing
+        // in the app links to a hardcoded http:// URL, so there's no mixed
+        // content to upgrade) and the downside is a footgun we've already hit.
         upgradeInsecureRequests: null,
       },
     },
-    // Also a Helmet default; forcing HSTS on a plain-HTTP-only server is the
-    // same footgun in a different header — disabled for the same reason.
-    hsts: false,
+    // HSTS is safe to leave on Helmet's default even for local plain-HTTP
+    // testing: browsers only honor Strict-Transport-Security when it's
+    // received over an actual HTTPS connection, so it's a no-op until the
+    // TLS-terminating proxy (Nginx Proxy Manager) is actually in front.
   })
 );
 
@@ -63,7 +71,11 @@ const sessionMiddleware = session({
   cookie: {
     httpOnly: true,
     sameSite: 'lax',
-    secure: false, // plain HTTP behind nginx for this skeleton — see README caveat on geolocation + HTTPS
+    // 'auto' marks the cookie Secure only when the request is actually HTTPS
+    // (via req.secure, which respects X-Forwarded-Proto once trust proxy is
+    // set) — works whether this is reached directly over plain HTTP (local
+    // testing) or through Nginx Proxy Manager terminating real TLS in front.
+    secure: 'auto',
     maxAge: 1000 * 60 * 60 * 12,
   },
 });
