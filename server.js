@@ -183,7 +183,17 @@ app.post('/api/logout', (req, res) => {
 
 app.get('/api/me', (req, res) => {
   if (!req.session.user) return res.status(401).json({ error: 'Not authenticated' });
-  res.json(req.session.user);
+
+  const user = { ...req.session.user };
+  if (user.role === 'driver') {
+    // Lets the driver page tell a real in-progress shift apart from a fresh
+    // page load, so a refresh (or the phone briefly losing/regaining the
+    // tab) can resume tracking instead of resetting to "Start Shift" — that
+    // reset looked like being signed out even though the session was fine.
+    const driver = drivers.get(String(user.id));
+    user.shiftActive = !!driver && driver.status === 'active';
+  }
+  res.json(user);
 });
 
 app.get('/api/config', (req, res) => {

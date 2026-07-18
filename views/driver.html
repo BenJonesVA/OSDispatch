@@ -272,6 +272,16 @@
     }
     driverNameEl.textContent = user.displayName;
     socket = io();
+
+    // The account session survives a refresh on its own (it's just a cookie),
+    // but this page's local state (onShift, the watch/timer handles) doesn't.
+    // If the server still considers this driver's shift active, resume
+    // tracking automatically instead of resetting to "Start Shift" — from
+    // the driver's side, that reset looked indistinguishable from being
+    // signed out even though the account itself was never logged out.
+    if (user.shiftActive) {
+      startShift();
+    }
   }
 
   init();
