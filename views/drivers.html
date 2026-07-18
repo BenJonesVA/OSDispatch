@@ -42,6 +42,15 @@
   .reset-pin-inline { display: flex; gap: 6px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
   .reset-pin-inline .input { width: 68px; height: 30px; padding: 0 6px; font-size: 12px; }
 
+  .edit-panel {
+    grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px;
+    margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border);
+  }
+  .edit-panel.hidden { display: none; }
+  .edit-panel .field { flex: 1; min-width: 160px; margin-bottom: 0; }
+  .edit-panel .input { width: 100%; height: 32px; padding: 0 8px; font-size: 13px; }
+  .edit-panel .edit-actions { display: flex; gap: 8px; }
+
   .field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 16px; }
   .field label { font-family: var(--font-mono); font-size: 11px; color: var(--text-mid); letter-spacing: 0.05em; }
   .pin-row { display: flex; gap: 8px; }
@@ -207,7 +216,22 @@
           <button class="btn-link toggle-active-btn" style="color:${driver.active ? 'var(--disconnected-text)' : 'var(--active-text)'};">
             ${driver.active ? 'Deactivate' : 'Reactivate'}
           </button>
+          <button class="btn-link edit-btn">Edit</button>
           <button class="btn-link delete-btn" style="color:var(--disconnected-text);">Delete</button>
+        </div>
+        <div class="edit-panel hidden">
+          <div class="field">
+            <label>PHONE</label>
+            <input type="tel" class="input edit-phone" value="${driver.phone ? escapeHtml(driver.phone) : ''}" />
+          </div>
+          <div class="field">
+            <label>VEHICLE ID</label>
+            <input type="text" class="input edit-vehicle-id" value="${driver.vehicleId ? escapeHtml(driver.vehicleId) : ''}" />
+          </div>
+          <div class="edit-actions">
+            <button class="btn btn-primary save-edit-btn">Save</button>
+            <button class="btn btn-secondary cancel-edit-btn">Cancel</button>
+          </div>
         </div>
         <div class="row-error hidden"></div>
       `;
@@ -251,6 +275,36 @@
           showRowError(body.error || 'Failed to update driver.');
           return;
         }
+        loadDrivers();
+      });
+
+      const editPanel = row.querySelector('.edit-panel');
+
+      row.querySelector('.edit-btn').addEventListener('click', () => {
+        editPanel.classList.toggle('hidden');
+      });
+
+      row.querySelector('.cancel-edit-btn').addEventListener('click', () => {
+        row.querySelector('.edit-phone').value = driver.phone || '';
+        row.querySelector('.edit-vehicle-id').value = driver.vehicleId || '';
+        editPanel.classList.add('hidden');
+        rowError.classList.add('hidden');
+      });
+
+      row.querySelector('.save-edit-btn').addEventListener('click', async () => {
+        const phone = row.querySelector('.edit-phone').value.trim();
+        const vehicleId = row.querySelector('.edit-vehicle-id').value.trim();
+        const res = await fetch(`/api/drivers/${driver.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone, vehicleId }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          showRowError(body.error || 'Failed to update driver.');
+          return;
+        }
+        rowError.classList.add('hidden');
         loadDrivers();
       });
 
