@@ -4,57 +4,78 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Sign In — OSDispatch</title>
-<script src="https://cdn.tailwindcss.com"></script>
 <link rel="icon" href="data:," />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/theme.css">
+<style>
+  body { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .login-card { width: 100%; max-width: 380px; padding: 28px; display: flex; flex-direction: column; gap: 20px; }
+  .login-header { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .login-header .brand-mark { width: 40px; height: 40px; border-radius: 11px; }
+  .login-header .brand-mark::after { width: 13px; height: 13px; }
+  .login-header h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+  .login-header p { margin: 0; font-size: 13px; color: var(--text-mid); }
+
+  .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; background: var(--subtle); border-radius: 10px; padding: 4px; }
+  .tab-btn {
+    padding: 9px 0; border: none; border-radius: 8px; background: transparent; color: var(--text-mid);
+    font-family: var(--font-sans); font-size: 14px; font-weight: 600; cursor: pointer; transition: background-color .15s ease, color .15s ease;
+  }
+  .tab-btn.tab-active { background: var(--accent); color: #fff; }
+
+  form.login-form { display: flex; flex-direction: column; gap: 14px; }
+  form.login-form.hidden { display: none; }
+  .field label { display: block; font-size: 13px; font-weight: 600; color: var(--text-mid); margin-bottom: 6px; }
+  #driverPin { letter-spacing: 0.5em; text-align: center; font-size: 18px; }
+
+  .error-banner {
+    background: var(--disconnected-bg); border: 1px solid var(--disconnected-border); color: var(--disconnected-text);
+    font-size: 13px; border-radius: 10px; padding: 10px 12px;
+  }
+  .error-banner.hidden { display: none; }
+</style>
 </head>
-<body class="bg-slate-900 text-slate-100 min-h-screen flex items-center justify-center px-4">
+<body>
 
-  <div class="w-full max-w-sm bg-slate-800 rounded-2xl p-6 shadow-lg space-y-5">
-    <div class="text-center space-y-1">
-      <h1 class="text-xl font-bold">OSDispatch</h1>
-      <p class="text-slate-400 text-sm">Sign in to continue</p>
+  <div class="login-card card">
+    <div class="login-header">
+      <div class="brand-mark"></div>
+      <h1>OSDispatch</h1>
+      <p>Sign in to continue</p>
     </div>
 
-    <div class="grid grid-cols-2 gap-1 bg-slate-900 rounded-xl p-1">
-      <button id="tabDriver" type="button" class="py-2 rounded-lg text-sm font-medium transition-colors">Driver</button>
-      <button id="tabDispatcher" type="button" class="py-2 rounded-lg text-sm font-medium transition-colors">Dispatcher</button>
+    <div class="tabs">
+      <button id="tabDriver" type="button" class="tab-btn">Driver</button>
+      <button id="tabDispatcher" type="button" class="tab-btn">Dispatcher</button>
     </div>
 
-    <form id="driverForm" class="space-y-4">
-      <div>
-        <label for="driverCode" class="block text-sm font-medium text-slate-300 mb-1">Driver code</label>
-        <input id="driverCode" type="text" autocomplete="username" required
-          class="w-full rounded-lg bg-slate-700 border border-slate-600 px-3 py-2 text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500" />
+    <form id="driverForm" class="login-form">
+      <div class="field">
+        <label for="driverCode">Driver code</label>
+        <input id="driverCode" class="input" type="text" autocomplete="username" required />
       </div>
-      <div>
-        <label for="driverPin" class="block text-sm font-medium text-slate-300 mb-1">4-digit PIN</label>
-        <input id="driverPin" type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" required
-          class="w-full rounded-lg bg-slate-700 border border-slate-600 px-3 py-2 text-slate-100 tracking-[0.5em] text-center text-lg focus:outline-none focus:ring-2 focus:ring-sky-500" />
+      <div class="field">
+        <label for="driverPin">4-digit PIN</label>
+        <input id="driverPin" class="input input-mono" type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" required />
       </div>
-      <button type="submit"
-        class="w-full py-2.5 rounded-xl font-semibold bg-sky-600 hover:bg-sky-500 active:bg-sky-700 transition-colors">
-        Sign In
-      </button>
+      <button type="submit" class="btn btn-primary" style="width:100%;">Sign In</button>
     </form>
 
-    <form id="dispatcherForm" class="space-y-4 hidden">
-      <div>
-        <label for="username" class="block text-sm font-medium text-slate-300 mb-1">Username</label>
-        <input id="username" type="text" autocomplete="username"
-          class="w-full rounded-lg bg-slate-700 border border-slate-600 px-3 py-2 text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500" />
+    <form id="dispatcherForm" class="login-form hidden">
+      <div class="field">
+        <label for="username">Username</label>
+        <input id="username" class="input" type="text" autocomplete="username" />
       </div>
-      <div>
-        <label for="password" class="block text-sm font-medium text-slate-300 mb-1">Password</label>
-        <input id="password" type="password" autocomplete="current-password"
-          class="w-full rounded-lg bg-slate-700 border border-slate-600 px-3 py-2 text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500" />
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" class="input" type="password" autocomplete="current-password" />
       </div>
-      <button type="submit"
-        class="w-full py-2.5 rounded-xl font-semibold bg-sky-600 hover:bg-sky-500 active:bg-sky-700 transition-colors">
-        Sign In
-      </button>
+      <button type="submit" class="btn btn-primary" style="width:100%;">Sign In</button>
     </form>
 
-    <div id="errorBanner" class="hidden bg-red-900/60 border border-red-700 text-red-100 text-sm rounded-xl p-3"></div>
+    <div id="errorBanner" class="error-banner hidden"></div>
   </div>
 
 <script>
@@ -65,20 +86,13 @@
   const dispatcherForm = document.getElementById('dispatcherForm');
   const errorBanner = document.getElementById('errorBanner');
 
-  const activeTabCls = ['bg-sky-600', 'text-white'];
-  const inactiveTabCls = ['text-slate-400', 'hover:text-slate-200'];
-
   function setTab(tab) {
     errorBanner.classList.add('hidden');
     const isDriver = tab === 'driver';
     driverForm.classList.toggle('hidden', !isDriver);
     dispatcherForm.classList.toggle('hidden', isDriver);
-    tabDriver.classList.toggle('bg-sky-600', isDriver);
-    tabDriver.classList.toggle('text-white', isDriver);
-    tabDriver.classList.toggle('text-slate-400', !isDriver);
-    tabDispatcher.classList.toggle('bg-sky-600', !isDriver);
-    tabDispatcher.classList.toggle('text-white', !isDriver);
-    tabDispatcher.classList.toggle('text-slate-400', isDriver);
+    tabDriver.classList.toggle('tab-active', isDriver);
+    tabDispatcher.classList.toggle('tab-active', !isDriver);
   }
 
   tabDriver.addEventListener('click', () => setTab('driver'));

@@ -27,10 +27,10 @@ async function seedUsers() {
     // accounts. A credential changed directly in the database is never
     // silently reverted by a later boot.
     await pool.query(
-      `INSERT INTO users (username, password_hash, pin_hash, role, display_name, active)
-       VALUES ($1, $2, $3, $4, $5, true)
+      `INSERT INTO users (username, password_hash, pin_hash, role, display_name, active, phone, vehicle_id)
+       VALUES ($1, $2, $3, $4, $5, true, $6, $7)
        ON CONFLICT (username) DO NOTHING`,
-      [user.username, passwordHash, pinHash, user.role, user.displayName]
+      [user.username, passwordHash, pinHash, user.role, user.displayName, user.phone || null, user.vehicleId || null]
     );
   }
 

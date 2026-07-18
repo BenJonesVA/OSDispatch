@@ -40,8 +40,8 @@ app.use(
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'", 'https://cdn.tailwindcss.com', 'https://unpkg.com'],
-        styleSrc: ["'self'", "'unsafe-inline'", 'https://unpkg.com'],
+        scriptSrc: ["'self'", "'unsafe-inline'", 'https://unpkg.com'],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://unpkg.com', 'https://fonts.googleapis.com'],
         imgSrc: ["'self'", 'data:', 'https://*.basemaps.cartocdn.com'],
         connectSrc: ["'self'", 'ws:', 'wss:'],
         // Helmet's default CSP includes this directive, which tells browsers to
@@ -103,6 +103,7 @@ app.get('/sw.js', (req, res) => {
 });
 
 app.use('/icons', express.static(path.join(__dirname, 'views', 'icons')));
+app.use('/assets', express.static(path.join(__dirname, 'views', 'assets')));
 
 function requireRole(role) {
   return (req, res, next) => {
@@ -219,24 +220,36 @@ app.get('/dispatch/drivers', requireRole('dispatcher'), (req, res) => {
 
 const PIN_PATTERN = /^\d{4}$/;
 
+function mapDriverRow(row) {
+  return {
+    id: row.id,
+    code: row.username,
+    displayName: row.display_name,
+    active: row.active,
+    createdAt: row.created_at,
+    phone: row.phone,
+    vehicleId: row.vehicle_id,
+    hasPin: row.has_pin,
+    lastActive: row.last_active === undefined ? null : row.last_active,
+  };
+}
+
 app.get('/api/drivers', requireRole('dispatcher'), async (req, res) => {
   const result = await pool.query(
-    `SELECT id, username, display_name, active, created_at
-     FROM users WHERE role = 'driver' ORDER BY created_at ASC`
+    `SELECT u.id, u.username, u.display_name, u.active, u.created_at,
+            u.phone, u.vehicle_id, (u.pin_hash IS NOT NULL) AS has_pin,
+            MAX(lp.recorded_at) AS last_active
+     FROM users u
+     LEFT JOIN location_pings lp ON lp.user_id = u.id
+     WHERE u.role = 'driver'
+     GROUP BY u.id
+     ORDER BY u.created_at ASC`
   );
-  res.json(
-    result.rows.map((row) => ({
-      id: row.id,
-      code: row.username,
-      displayName: row.display_name,
-      active: row.active,
-      createdAt: row.created_at,
-    }))
-  );
+  res.json(result.rows.map(mapDriverRow));
 });
 
 app.post('/api/drivers', requireRole('dispatcher'), async (req, res) => {
-  const { code, displayName, pin } = req.body || {};
+  const { code, displayName, pin, phone, vehicleId } = req.body || {};
   if (typeof code !== 'string' || !code.trim() || typeof displayName !== 'string' || !displayName.trim()) {
     return res.status(400).json({ error: 'Driver code and display name are required.' });
   }
@@ -247,19 +260,18 @@ app.post('/api/drivers', requireRole('dispatcher'), async (req, res) => {
   const pinHash = await bcrypt.hash(pin, 10);
   try {
     const result = await pool.query(
-      `INSERT INTO users (username, pin_hash, role, display_name, active)
-       VALUES ($1, $2, 'driver', $3, true)
-       RETURNING id, username, display_name, active, created_at`,
-      [code.trim(), pinHash, displayName.trim()]
+      `INSERT INTO users (username, pin_hash, role, display_name, active, phone, vehicle_id)
+       VALUES ($1, $2, 'driver', $3, true, $4, $5)
+       RETURNING id, username, display_name, active, created_at, phone, vehicle_id, true AS has_pin`,
+      [
+        code.trim(),
+        pinHash,
+        displayName.trim(),
+        typeof phone === 'string' && phone.trim() ? phone.trim() : null,
+        typeof vehicleId === 'string' && vehicleId.trim() ? vehicleId.trim() : null,
+      ]
     );
-    const row = result.rows[0];
-    res.status(201).json({
-      id: row.id,
-      code: row.username,
-      displayName: row.display_name,
-      active: row.active,
-      createdAt: row.created_at,
-    });
+    res.status(201).json(mapDriverRow(result.rows[0]));
   } catch (err) {
     if (err.code === '23505') {
       return res.status(409).json({ error: 'That driver code is already in use.' });
@@ -273,7 +285,7 @@ app.patch('/api/drivers/:id', requireRole('dispatcher'), async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid driver id.' });
 
-  const { displayName, active, pin } = req.body || {};
+  const { displayName, active, pin, phone, vehicleId } = req.body || {};
   const sets = [];
   const values = [];
 
@@ -301,6 +313,16 @@ app.patch('/api/drivers/:id', requireRole('dispatcher'), async (req, res) => {
     sets.push(`pin_hash = $${values.length}`);
   }
 
+  if (phone !== undefined) {
+    values.push(typeof phone === 'string' && phone.trim() ? phone.trim() : null);
+    sets.push(`phone = $${values.length}`);
+  }
+
+  if (vehicleId !== undefined) {
+    values.push(typeof vehicleId === 'string' && vehicleId.trim() ? vehicleId.trim() : null);
+    sets.push(`vehicle_id = $${values.length}`);
+  }
+
   if (!sets.length) {
     return res.status(400).json({ error: 'No fields to update.' });
   }
@@ -309,19 +331,12 @@ app.patch('/api/drivers/:id', requireRole('dispatcher'), async (req, res) => {
   const result = await pool.query(
     `UPDATE users SET ${sets.join(', ')}
      WHERE id = $${values.length} AND role = 'driver'
-     RETURNING id, username, display_name, active, created_at`,
+     RETURNING id, username, display_name, active, created_at, phone, vehicle_id, (pin_hash IS NOT NULL) AS has_pin`,
     values
   );
 
   if (!result.rows[0]) return res.status(404).json({ error: 'Driver not found.' });
-  const row = result.rows[0];
-  res.json({
-    id: row.id,
-    code: row.username,
-    displayName: row.display_name,
-    active: row.active,
-    createdAt: row.created_at,
-  });
+  res.json(mapDriverRow(result.rows[0]));
 });
 
 app.get('/dispatch/history', requireRole('dispatcher'), (req, res) => {
@@ -409,7 +424,7 @@ app.get('/', (req, res) => {
  * driverId -> {
  *   driverId, name, status: 'active' | 'ended' | 'disconnected',
  *   history: [{ latitude, longitude, timestamp }, ...] (oldest first, capped at HISTORY_LENGTH),
- *   distanceKm, speedKmh, lastSeen
+ *   distanceKm, speedKmh, speedLimitKmh, lastSeen
  * }
  */
 const drivers = new Map();
@@ -473,6 +488,7 @@ function publicDriverState(driver) {
     history: driver.history,
     distanceKm: driver.distanceKm,
     speedKmh: driver.speedKmh,
+    speedLimitKmh: driver.speedLimitKmh,
     lastSeen: driver.lastSeen,
   };
 }
@@ -638,6 +654,7 @@ io.on('connection', (socket) => {
         history: [],
         distanceKm: 0,
         speedKmh: null,
+        speedLimitKmh: null,
         lastSeen: timestamp,
       };
       drivers.set(driverId, driver);
@@ -663,9 +680,15 @@ io.on('connection', (socket) => {
     const speedKmhToStore = driver.speedKmh;
     getSpeedLimitKmh(latitude, longitude)
       .catch(() => null)
-      .then((speedLimitKmh) =>
-        insertPing(userSession.user.id, latitude, longitude, timestamp, speedKmhToStore, speedLimitKmh)
-      );
+      .then((speedLimitKmh) => {
+        insertPing(userSession.user.id, latitude, longitude, timestamp, speedKmhToStore, speedLimitKmh);
+        // The lookup is best-effort and often lags the position broadcast
+        // above (cache miss + throttle) — re-broadcast once it resolves so
+        // the dashboard's SPEEDING badge catches up rather than never
+        // showing up at all.
+        driver.speedLimitKmh = speedLimitKmh;
+        io.to('dispatch').emit('driver_update', publicDriverState(driver));
+      });
   });
 
   socket.on('end_shift', () => {

@@ -4,29 +4,50 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Dashboard — OSDispatch</title>
-<script src="https://cdn.tailwindcss.com"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <link rel="icon" href="data:," />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/theme.css">
 <style>
-  html, body { height: 100%; margin: 0; }
+  html, body { height: 100%; }
   #app-root { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
   .app-body { flex: 1 1 auto; display: flex; flex-direction: row; overflow: hidden; }
-  .sidebar { flex: 0 0 320px; overflow-y: auto; }
-  .map-wrapper { flex: 1 1 auto; position: relative; overflow: hidden; }
+  .sidebar { flex: 0 0 340px; overflow-y: auto; background: var(--card); border-right: 1px solid var(--border); padding: 14px; }
+  .map-wrapper { flex: 1 1 auto; position: relative; overflow: hidden; background: var(--sunken); }
   #map { width: 100%; height: 100%; }
 
-  @media (max-width: 700px) {
+  @media (max-width: 800px) {
     .app-body { flex-direction: column; }
     .sidebar { flex: 0 0 auto; width: 100%; max-height: 40vh; }
   }
 
-  .driver-dot { border-radius: 50%; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
-  .driver-dot.ended { opacity: 0.4; }
-  .driver-pulse-ring {
-    position: absolute; inset: -6px; border-radius: 50%;
-    animation: dpulse 2.2s ease-out infinite;
-  }
+  .header-right { display: flex; align-items: center; gap: 16px; margin-left: auto; }
+  .counts { display: flex; gap: 14px; font-family: var(--font-mono); font-size: 12px; font-weight: 500; }
+  .count-active { color: var(--active-text); }
+  .count-ended { color: var(--text-mid); }
+  .count-lost { color: var(--disconnected-text); }
+  .avatar-btn { border: none; cursor: pointer; }
+
+  .sidebar-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 4px 12px; font-size: 13px; font-weight: 600; color: var(--text-mid); }
+  .empty-state { font-size: 13px; color: var(--text-low); padding: 8px 4px; }
+  .empty-state.hidden, .fix-detail.hidden { display: none; }
+
+  .driver-card { width: 100%; text-align: left; background: #fff; border: 1px solid var(--border); border-radius: 11px; padding: 14px; cursor: pointer; margin-bottom: 10px; transition: box-shadow .15s ease; }
+  .driver-card:hover { box-shadow: var(--shadow-hover); }
+  .driver-card.is-selected { background: var(--accent-tint); border: 1.5px solid var(--accent); box-shadow: 0 0 0 3px rgba(79,107,255,0.12); }
+  .driver-card.is-alarm { background: #fff4f5; border: 1.5px solid var(--disconnected); box-shadow: 0 0 0 3px rgba(240,56,79,0.1); }
+  .driver-card.is-ended { opacity: 0.7; }
+  .driver-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .driver-card-id { display: flex; align-items: center; gap: 11px; min-width: 0; }
+  .driver-card-name { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .driver-card-stats { display: flex; gap: 18px; margin-top: 12px; font-family: var(--font-mono); font-size: 12px; }
+  .driver-card-stats .stat-label { color: var(--text-low); }
+  .driver-card-alarm-line { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-family: var(--font-mono); font-size: 12px; color: var(--disconnected-text); font-weight: 500; }
+
+  .driver-pulse-ring { position: absolute; inset: -6px; border-radius: 50%; animation: dpulse 2.2s ease-out infinite; }
   @keyframes dpulse {
     0%   { transform: scale(1);   opacity: 0.55; }
     70%  { transform: scale(2.2); opacity: 0; }
@@ -36,27 +57,46 @@
     from { opacity: 0; transform: translateY(-8px); }
     to   { opacity: 1; transform: translateY(0); }
   }
+
+  .map-pin-label { color: #fff; font-family: var(--font-mono); font-size: 10px; font-weight: 500; padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
+
+  #toastContainer { position: fixed; top: 16px; right: 16px; z-index: 2000; display: flex; flex-direction: column; gap: 10px; width: 320px; }
+  .toast-head { display: flex; align-items: center; gap: 9px; margin-bottom: 6px; }
+  .toast-title { font-size: 13px; font-weight: 700; color: var(--disconnected-text); }
+  .toast-time { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--text-low); }
+  .toast-body { font-size: 13px; color: var(--text-mid); line-height: 1.45; }
+  .toast-actions { display: flex; gap: 8px; margin-top: 12px; }
+  .toast-actions button { flex: 1; height: 32px; }
+
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip { font-family: var(--font-sans); }
+  .popup-name { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+  .popup-row { font-size: 12px; color: var(--text-mid); }
 </style>
 </head>
-<body class="bg-slate-950 text-slate-100">
+<body>
 
 <div id="app-root">
-  <header class="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-800 shrink-0">
-    <h1 class="text-lg font-bold">Dispatch Dashboard</h1>
-    <div class="flex items-center gap-3">
-      <span id="connState" class="text-xs px-2 py-1 rounded-full bg-slate-800 text-slate-400">connecting…</span>
-      <span id="userBadge" class="text-xs text-slate-400"></span>
-      <a href="/dispatch/drivers" class="text-xs text-slate-400 hover:text-slate-200 underline">Manage Drivers</a>
-      <a href="/dispatch/history" class="text-xs text-slate-400 hover:text-slate-200 underline">History</a>
-      <button id="logoutBtn" class="text-xs text-slate-400 hover:text-slate-200 underline">Log out</button>
+  <header class="topbar" style="flex: none;">
+    <div class="brand"><div class="brand-mark"></div><span class="brand-name">OSDispatch</span></div>
+    <span id="connState" class="live-pill">
+      <span class="pulse-dot"></span>connecting…
+    </span>
+    <div class="header-right">
+      <div id="counts" class="counts"></div>
+      <a href="/dispatch/drivers" class="btn-link">Manage Drivers</a>
+      <a href="/dispatch/history" class="btn-link">History</a>
+      <span id="userBadge" class="text-mid" style="font-size:13px;"></span>
+      <button id="logoutBtn" class="btn-link">Log out</button>
     </div>
   </header>
 
   <div class="app-body">
-    <aside class="sidebar bg-slate-900 border-r border-slate-800 p-3 space-y-2">
-      <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wide px-1">Drivers</h2>
-      <div id="driverList" class="space-y-2"></div>
-      <p id="emptyState" class="text-sm text-slate-500 px-1">No drivers active yet.</p>
+    <aside class="sidebar">
+      <div class="sidebar-heading">
+        <span id="fleetCount">Fleet · 0 drivers</span>
+      </div>
+      <div id="driverList"></div>
+      <p id="emptyState" class="empty-state">No drivers active yet.</p>
     </aside>
 
     <div class="map-wrapper">
@@ -65,11 +105,13 @@
   </div>
 </div>
 
-<div id="toastContainer" class="fixed top-4 right-4 space-y-2" style="z-index: 2000;"></div>
+<div id="toastContainer"></div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
 (function () {
+  const SPEEDING_MARGIN_KMH = 8;
+
   const map = L.map('map', { zoomControl: true }).setView([39.5, -98.35], 4);
 
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
@@ -91,6 +133,25 @@
     return kmh.toFixed(1) + ' km/h';
   }
 
+  function isSpeeding(driver) {
+    return typeof driver.speedKmh === 'number' && typeof driver.speedLimitKmh === 'number'
+      && driver.speedKmh > driver.speedLimitKmh + SPEEDING_MARGIN_KMH;
+  }
+
+  // Precedence: a disconnected driver is always the loudest signal, then
+  // speeding, then the plain active/ended states.
+  function statusInfo(driver) {
+    if (driver.status === 'disconnected') return { key: 'disconnected', label: '⚠ LOST' };
+    if (isSpeeding(driver)) return { key: 'speeding', label: 'SPEEDING' };
+    if (driver.status === 'ended') return { key: 'ended', label: 'ENDED' };
+    return { key: 'active', label: 'ACTIVE' };
+  }
+
+  function initials(name) {
+    const parts = String(name).trim().split(/\s+/);
+    return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || '?';
+  }
+
   // driverId -> hue, stable per driver for the lifetime of the page.
   const hueCache = new Map();
   function hueForDriver(driverId) {
@@ -104,15 +165,18 @@
     return hue;
   }
 
-  function dotIcon(hue, { selected, status } = {}) {
+  function dotIcon(hue, { selected, status, speeding } = {}) {
     const isDisconnected = status === 'disconnected';
     const isEnded = status === 'ended';
-    // Disconnected always renders in alarm red, overriding the driver's own
-    // hue — this needs to catch the eye even before the dispatcher clicks it.
-    const color = isDisconnected ? '#ef4444' : `hsl(${hue}, 75%, 50%)`;
-    const showRing = selected || isDisconnected;
-    const ring = showRing
-      ? `<div class="driver-pulse-ring" style="background:${color}"></div>`
+    // Disconnected/speeding always render in their alarm color, overriding
+    // the driver's own identity hue — these need to catch the eye before the
+    // dispatcher clicks in.
+    const color = isDisconnected ? '#f0384f' : speeding ? '#f59e0b' : `hsl(${hue}, 75%, 50%)`;
+    // Selection uses a consistent accent-blue ring regardless of the pin's
+    // own color, except a disconnected alarm always wins visually.
+    const ringColor = isDisconnected ? '#f0384f' : selected ? '#4f6bff' : null;
+    const ring = ringColor
+      ? `<div class="driver-pulse-ring" style="background:${ringColor}"></div>`
       : '';
     return L.divIcon({
       className: '',
@@ -120,7 +184,7 @@
       iconAnchor: [8, 8],
       html: `<div style="position:relative;width:16px;height:16px">
                ${ring}
-               <div class="driver-dot${isEnded ? ' ended' : ''}" style="width:16px;height:16px;background:${color}"></div>
+               <div style="width:16px;height:16px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 4px rgba(26,33,48,.4);background:${color};opacity:${isEnded ? 0.45 : 1}"></div>
              </div>`,
     });
   }
@@ -159,13 +223,11 @@
 
   function popupHtml(driver) {
     const lastSeen = new Date(driver.lastSeen).toLocaleTimeString();
-    return `<div class="text-sm">
-      <div class="font-semibold">${escapeHtml(driver.name)}</div>
-      <div>Status: ${driver.status}</div>
-      <div>Distance: ${formatDistance(driver.distanceKm)}</div>
-      <div>Speed: ${formatSpeed(driver.speedKmh)}</div>
-      <div>Last seen: ${lastSeen}</div>
-    </div>`;
+    return `<div class="popup-name">${escapeHtml(driver.name)}</div>
+      <div class="popup-row">Status: ${statusInfo(driver).label.replace('⚠ ', '')}</div>
+      <div class="popup-row">Distance: ${formatDistance(driver.distanceKm)}</div>
+      <div class="popup-row">Speed: ${formatSpeed(driver.speedKmh)}</div>
+      <div class="popup-row">Last seen: ${lastSeen}</div>`;
   }
 
   function escapeHtml(str) {
@@ -181,19 +243,17 @@
       : null;
     if (!latlng) return;
 
+    const iconOpts = { selected: driver.driverId === selectedDriverId, status: driver.status, speeding: isSpeeding(driver) };
+
     let entry = markers.get(driver.driverId);
     if (!entry) {
-      const marker = L.marker(latlng, {
-        icon: dotIcon(hue, { selected: driver.driverId === selectedDriverId, status: driver.status }),
-      }).addTo(map);
+      const marker = L.marker(latlng, { icon: dotIcon(hue, iconOpts) }).addTo(map);
       marker.on('click', () => selectDriver(driver.driverId));
       entry = { marker, outline: null, accent: null };
       markers.set(driver.driverId, entry);
     } else {
       entry.marker.setLatLng(latlng);
-      entry.marker.setIcon(
-        dotIcon(hue, { selected: driver.driverId === selectedDriverId, status: driver.status })
-      );
+      entry.marker.setIcon(dotIcon(hue, iconOpts));
     }
 
     entry.marker.bindPopup(popupHtml(driver));
@@ -215,6 +275,16 @@
       upsertMarker(driver);
       renderBreadcrumb(driver);
     }
+    renderSidebar();
+  }
+
+  function locateDriver(driverId) {
+    selectDriver(driverId);
+    const entry = markers.get(driverId);
+    if (entry) {
+      map.flyTo(entry.marker.getLatLng(), 18, { animate: true, duration: 0.8 });
+      entry.marker.openPopup();
+    }
   }
 
   const driversById = new Map();
@@ -224,22 +294,54 @@
   // silent" event, only the resulting status in a snapshot/update).
   const previousStatus = new Map();
 
-  function showToast(message) {
+  function showToast(driver) {
     const toastContainer = document.getElementById('toastContainer');
     const toast = document.createElement('div');
-    toast.className = 'bg-red-800 text-red-50 text-sm px-4 py-2 rounded-lg shadow-lg border border-red-600';
+    toast.className = 'toast';
     toast.style.animation = 'toastIn 0.2s ease-out';
-    toast.textContent = message;
+    const lastSeen = new Date(driver.lastSeen).toLocaleTimeString();
+    toast.innerHTML = `
+      <div class="toast-head">
+        <span class="pulse-dot" style="color:var(--disconnected);"></span>
+        <span class="toast-title">Connection lost</span>
+        <span class="toast-time">now</span>
+      </div>
+      <div class="toast-body">${escapeHtml(driver.name)} stopped reporting. Last fix ${lastSeen}.</div>
+      <div class="toast-actions">
+        <button class="btn btn-danger locate-btn">Locate</button>
+        <button class="btn btn-secondary dismiss-btn">Dismiss</button>
+      </div>`;
+    const timer = setTimeout(() => toast.remove(), 10000);
+    toast.querySelector('.locate-btn').addEventListener('click', () => {
+      locateDriver(driver.driverId);
+      clearTimeout(timer);
+      toast.remove();
+    });
+    toast.querySelector('.dismiss-btn').addEventListener('click', () => {
+      clearTimeout(timer);
+      toast.remove();
+    });
     toastContainer.appendChild(toast);
-    setTimeout(() => toast.remove(), 8000);
   }
 
   function checkDisconnectTransition(driver) {
     const prev = previousStatus.get(driver.driverId);
     if (prev === 'active' && driver.status === 'disconnected') {
-      showToast(`⚠ ${driver.name} lost connection`);
+      showToast(driver);
     }
     previousStatus.set(driver.driverId, driver.status);
+  }
+
+  function renderCounts() {
+    const driverArr = Array.from(driversById.values());
+    const active = driverArr.filter((d) => d.status === 'active').length;
+    const ended = driverArr.filter((d) => d.status === 'ended').length;
+    const lost = driverArr.filter((d) => d.status === 'disconnected').length;
+    document.getElementById('counts').innerHTML =
+      `<span class="count-active">${active} active</span>` +
+      `<span class="count-ended">${ended} ended</span>` +
+      `<span class="count-lost">${lost} lost</span>`;
+    document.getElementById('fleetCount').textContent = `Fleet · ${driverArr.length} driver${driverArr.length === 1 ? '' : 's'}`;
   }
 
   function renderSidebar() {
@@ -249,31 +351,35 @@
 
     emptyEl.classList.toggle('hidden', driverArr.length > 0);
     listEl.innerHTML = '';
+    renderCounts();
 
     driverArr
       .sort((a, b) => b.lastSeen - a.lastSeen)
       .forEach((driver) => {
         const hue = hueForDriver(driver.driverId);
-        const isDisconnected = driver.status === 'disconnected';
+        const status = statusInfo(driver);
         const card = document.createElement('button');
-        card.className = 'w-full text-left rounded-xl p-3 bg-slate-800 hover:bg-slate-700 transition-colors ' +
-          (driver.driverId === selectedDriverId ? 'ring-2 ring-sky-500 ' : '') +
-          (driver.status === 'ended' ? 'opacity-50 ' : '') +
-          (isDisconnected ? 'ring-2 ring-red-500' : '');
-        const statusCls = driver.status === 'active'
-          ? 'text-emerald-400'
-          : isDisconnected ? 'text-red-400 font-semibold' : 'text-slate-500';
-        const statusLabel = isDisconnected ? '⚠ disconnected' : driver.status;
+        card.className = 'driver-card' +
+          (driver.driverId === selectedDriverId ? ' is-selected' : '') +
+          (status.key === 'disconnected' ? ' is-alarm' : '') +
+          (driver.status === 'ended' ? ' is-ended' : '');
+
+        const statsHtml = status.key === 'disconnected'
+          ? `<div class="driver-card-alarm-line"><span>SIGNAL LOST</span><span class="text-low" style="font-weight:400;">· last fix ${new Date(driver.lastSeen).toLocaleTimeString()} · ${formatDistance(driver.distanceKm)}</span></div>`
+          : `<div class="driver-card-stats">
+               <div><span class="stat-label">DIST </span>${formatDistance(driver.distanceKm)}</div>
+               <div><span class="stat-label">SPD </span>${formatSpeed(driver.speedKmh)}</div>
+             </div>`;
+
         card.innerHTML = `
-          <div class="flex items-center gap-2 mb-1">
-            <span style="width:10px;height:10px;border-radius:50%;background:hsl(${hue},75%,50%)"></span>
-            <span class="font-medium truncate">${escapeHtml(driver.name)}</span>
-            <span class="ml-auto text-xs ${statusCls}">${statusLabel}</span>
+          <div class="driver-card-top">
+            <div class="driver-card-id">
+              <div class="avatar avatar-sm" style="background:hsl(${hue},75%,45%)">${initials(driver.name)}</div>
+              <span class="driver-card-name">${escapeHtml(driver.name)}</span>
+            </div>
+            <span class="badge badge-${status.key}">${status.label.replace('⚠ ', '')}</span>
           </div>
-          <div class="text-xs text-slate-400 grid grid-cols-2 gap-x-2">
-            <span>Dist: ${formatDistance(driver.distanceKm)}</span>
-            <span>Speed: ${formatSpeed(driver.speedKmh)}</span>
-          </div>
+          ${statsHtml}
         `;
         card.addEventListener('click', () => {
           selectDriver(driver.driverId);
@@ -283,14 +389,7 @@
             entry.marker.openPopup();
           }
         });
-        card.addEventListener('dblclick', () => {
-          selectDriver(driver.driverId);
-          const entry = markers.get(driver.driverId);
-          if (entry) {
-            map.flyTo(entry.marker.getLatLng(), 18, { animate: true, duration: 0.8 });
-            entry.marker.openPopup();
-          }
-        });
+        card.addEventListener('dblclick', () => locateDriver(driver.driverId));
         listEl.appendChild(card);
       });
   }
@@ -341,14 +440,14 @@
     const socket = io();
 
     socket.on('connect', () => {
-      connStateEl.textContent = 'live';
-      connStateEl.className = 'text-xs px-2 py-1 rounded-full bg-emerald-800 text-emerald-100';
+      connStateEl.innerHTML = '<span class="pulse-dot"></span>LIVE';
+      connStateEl.classList.remove('is-offline');
       socket.emit('join_dispatch');
     });
 
     socket.on('disconnect', () => {
-      connStateEl.textContent = 'disconnected';
-      connStateEl.className = 'text-xs px-2 py-1 rounded-full bg-red-800 text-red-100';
+      connStateEl.innerHTML = '<span class="pulse-dot"></span>disconnected';
+      connStateEl.classList.add('is-offline');
     });
 
     socket.on('drivers_state', applySnapshot);

@@ -4,58 +4,118 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Manage Drivers — OSDispatch</title>
-<script src="https://cdn.tailwindcss.com"></script>
 <link rel="icon" href="data:," />
-</head>
-<body class="bg-slate-950 text-slate-100 min-h-screen">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/theme.css">
+<style>
+  .page-wrap { max-width: 1240px; margin: 0 auto; padding: 20px; }
+  .panel { display: flex; }
+  .panel-main { flex: 1; min-width: 0; padding: 22px; }
+  .panel-side { width: 320px; flex: none; border-left: 1px solid var(--border); background: var(--subtle); padding: 22px; }
+  @media (max-width: 900px) { .panel { flex-direction: column; } .panel-side { width: auto; border-left: none; border-top: 1px solid var(--border); } }
 
-<header class="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-800">
-  <h1 class="text-lg font-bold">Manage Drivers</h1>
-  <div class="flex items-center gap-3">
-    <a href="/dispatch" class="text-xs text-slate-400 hover:text-slate-200 underline">Back to Dashboard</a>
-    <button id="logoutBtn" class="text-xs text-slate-400 hover:text-slate-200 underline">Log out</button>
+  .panel-heading { display: flex; align-items: center; gap: 16px; margin-bottom: 18px; }
+  .panel-heading h2 { margin: 0; font-size: 20px; font-weight: 700; }
+  .panel-heading .text-low { font-weight: 500; }
+
+  .table-header, .table-row {
+    display: grid; grid-template-columns: 1.6fr 1.1fr 0.9fr 0.9fr 1fr 1.1fr; gap: 12px; align-items: center;
+  }
+  .table-header {
+    padding: 0 10px 10px; font-family: var(--font-mono); font-size: 11px; color: var(--text-low);
+    letter-spacing: 0.05em; border-bottom: 1px solid var(--border);
+  }
+  .table-row { padding: 13px 10px; border-bottom: 1px solid var(--subtle); }
+  .table-row.is-inactive { background: #fafbfd; opacity: 0.7; }
+  .row-driver { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .row-driver .name { font-size: 14px; font-weight: 600; }
+  .row-driver .code { font-family: var(--font-mono); font-size: 11px; color: var(--text-low); }
+  .row-actions { display: flex; gap: 12px; justify-content: flex-end; font-size: 13px; }
+  .pin-set { color: var(--active-text); font-family: var(--font-mono); font-size: 13px; }
+  .pin-none { color: var(--text-low); font-family: var(--font-mono); font-size: 13px; }
+  .last-active { font-family: var(--font-mono); font-size: 12px; color: var(--text-mid); }
+
+  .row-error { grid-column: 1 / -1; font-size: 12px; color: var(--disconnected-text); margin-top: 6px; }
+  .row-error.hidden { display: none; }
+  .reset-pin-inline { display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+  .reset-pin-inline .input { width: 68px; height: 30px; padding: 0 6px; font-size: 12px; }
+
+  .field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 16px; }
+  .field label { font-family: var(--font-mono); font-size: 11px; color: var(--text-mid); letter-spacing: 0.05em; }
+  .pin-row { display: flex; gap: 8px; }
+  .pin-row .input-pin { flex: 1; }
+  .form-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+
+  #addError.hidden { display: none; }
+  #addError { background: var(--disconnected-bg); border: 1px solid var(--disconnected-border); color: var(--disconnected-text); font-size: 13px; border-radius: 10px; padding: 10px 12px; margin-top: 12px; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><div class="brand-mark"></div><span class="brand-name">OSDispatch</span></div>
+  <h1 style="font-size:16px;font-weight:700;margin:0 0 0 12px;">Driver Management</h1>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:16px;">
+    <a href="/dispatch" class="btn-link">Back to Dashboard</a>
+    <button id="logoutBtn" class="btn-link">Log out</button>
   </div>
 </header>
 
-<main class="max-w-3xl mx-auto p-4 space-y-6">
-
-  <section class="bg-slate-800 rounded-2xl p-5 space-y-4 shadow-lg">
-    <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wide">Add Driver</h2>
-    <form id="addForm" class="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
-      <div>
-        <label class="block text-xs text-slate-400 mb-1">Driver code</label>
-        <input id="newCode" type="text" required
-          class="w-full rounded-lg bg-slate-700 border border-slate-600 px-3 py-2 text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500" />
-      </div>
-      <div>
-        <label class="block text-xs text-slate-400 mb-1">Display name</label>
-        <input id="newDisplayName" type="text" required
-          class="w-full rounded-lg bg-slate-700 border border-slate-600 px-3 py-2 text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500" />
-      </div>
-      <div>
-        <label class="block text-xs text-slate-400 mb-1">4-digit PIN</label>
-        <div class="flex gap-1">
-          <input id="newPin" type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="4" required
-            class="w-full rounded-lg bg-slate-700 border border-slate-600 px-3 py-2 text-slate-100 text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-sky-500" />
-          <button type="button" id="generatePin" title="Generate a random PIN"
-            class="px-2 rounded-lg bg-slate-600 hover:bg-slate-500 text-xs shrink-0">Gen</button>
+<div class="page-wrap">
+  <div class="card panel">
+    <div class="panel-main">
+      <div class="panel-heading">
+        <h2>Drivers <span id="driverCount" class="text-low"></span></h2>
+        <div style="margin-left:auto;display:flex;gap:8px;font-family:var(--font-mono);font-size:12px;">
+          <span id="activeCount" class="badge badge-active"></span>
+          <span id="inactiveCount" class="badge badge-ended"></span>
         </div>
       </div>
-      <button type="submit"
-        class="py-2.5 rounded-xl font-semibold bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 transition-colors">
-        Add Driver
-      </button>
-    </form>
-    <div id="addError" class="hidden bg-red-900/60 border border-red-700 text-red-100 text-sm rounded-xl p-3"></div>
-  </section>
 
-  <section class="space-y-2">
-    <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wide px-1">Drivers</h2>
-    <div id="driverTable" class="space-y-2"></div>
-    <p id="emptyState" class="text-sm text-slate-500 px-1 hidden">No drivers yet — add one above.</p>
-  </section>
+      <div class="table-header">
+        <span>DRIVER</span><span>PHONE</span><span>PIN</span><span>STATE</span><span>LAST ACTIVE</span><span style="text-align:right;">ACTIONS</span>
+      </div>
+      <div id="driverTable"></div>
+      <p id="emptyState" class="empty-state hidden" style="padding:16px 10px;color:var(--text-low);font-size:13px;">No drivers yet — add one on the right.</p>
+    </div>
 
-</main>
+    <div class="panel-side">
+      <h3 style="margin:0 0 4px;font-size:18px;font-weight:700;">Add driver</h3>
+      <p style="margin:0 0 20px;font-size:13px;color:var(--text-mid);line-height:1.45;">Creates an account and a check-in PIN.</p>
+      <form id="addForm">
+        <div class="field">
+          <label>FULL NAME</label>
+          <input id="newDisplayName" type="text" class="input" required />
+        </div>
+        <div class="field">
+          <label>DRIVER CODE</label>
+          <input id="newCode" type="text" class="input" required />
+        </div>
+        <div class="field">
+          <label>PHONE (OPTIONAL)</label>
+          <input id="newPhone" type="tel" class="input input-mono" />
+        </div>
+        <div class="field">
+          <label>VEHICLE ID (OPTIONAL)</label>
+          <input id="newVehicleId" type="text" class="input input-mono" />
+        </div>
+        <div class="field">
+          <label>CHECK-IN PIN</label>
+          <div class="pin-row">
+            <input id="newPin" type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="4" required class="input input-pin" />
+            <button type="button" id="generatePin" class="btn btn-primary" title="Generate a random PIN">↻ Generate</button>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-success">Add driver</button>
+        </div>
+        <div id="addError" class="hidden"></div>
+      </form>
+    </div>
+  </div>
+</div>
 
 <script>
 (function () {
@@ -68,6 +128,30 @@
     return String(str).replace(/[&<>"']/g, (c) => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     }[c]));
+  }
+
+  function initials(name) {
+    const parts = String(name).trim().split(/\s+/);
+    return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || '?';
+  }
+
+  function hueForDriver(id) {
+    let hash = 0;
+    const s = String(id);
+    for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+    return hash % 360;
+  }
+
+  function formatRelative(iso) {
+    if (!iso) return 'never';
+    const diffMs = Date.now() - new Date(iso).getTime();
+    const min = Math.floor(diffMs / 60000);
+    if (min < 1) return 'just now';
+    if (min < 60) return `${min} min ago`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr} h ago`;
+    const days = Math.floor(hr / 24);
+    return `${days} day${days === 1 ? '' : 's'} ago`;
   }
 
   function randomPin() {
@@ -96,37 +180,45 @@
   function renderDrivers(drivers) {
     emptyState.classList.toggle('hidden', drivers.length > 0);
     driverTable.innerHTML = '';
+    document.getElementById('driverCount').textContent = drivers.length;
+    const activeN = drivers.filter((d) => d.active).length;
+    document.getElementById('activeCount').textContent = `${activeN} active`;
+    document.getElementById('inactiveCount').textContent = `${drivers.length - activeN} inactive`;
 
     drivers.forEach((driver) => {
-      const card = document.createElement('div');
-      card.className = 'bg-slate-800 rounded-xl p-4 flex flex-wrap items-center gap-3' + (driver.active ? '' : ' opacity-60');
-      card.innerHTML = `
-        <div class="flex-1 min-w-[140px]">
-          <div class="font-medium">${escapeHtml(driver.displayName)}</div>
-          <div class="text-xs text-slate-400">Code: ${escapeHtml(driver.code)}</div>
+      const row = document.createElement('div');
+      row.className = 'table-row' + (driver.active ? '' : ' is-inactive');
+      const hue = hueForDriver(driver.id);
+      row.innerHTML = `
+        <div class="row-driver">
+          <div class="avatar avatar-sm" style="background:hsl(${hue},70%,50%)">${initials(driver.displayName)}</div>
+          <div>
+            <div class="name">${escapeHtml(driver.displayName)}</div>
+            <div class="code">${escapeHtml(driver.code)}${driver.vehicleId ? ' · ' + escapeHtml(driver.vehicleId) : ''}</div>
+          </div>
         </div>
-        <span class="text-xs px-2 py-1 rounded-full ${driver.active ? 'bg-emerald-800 text-emerald-100' : 'bg-slate-700 text-slate-400'}">
-          ${driver.active ? 'active' : 'deactivated'}
-        </span>
-        <div class="flex flex-wrap items-center gap-2">
-          <input type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="New PIN"
-            class="pin-input w-24 rounded-lg bg-slate-700 border border-slate-600 px-2 py-1 text-sm text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-sky-500" />
-          <button class="reset-pin-btn text-xs px-2 py-1 rounded-lg bg-slate-600 hover:bg-slate-500">Reset PIN</button>
-          <button class="toggle-active-btn text-xs px-2 py-1 rounded-lg ${driver.active ? 'bg-red-800 hover:bg-red-700' : 'bg-emerald-800 hover:bg-emerald-700'}">
+        <span class="mono" style="font-size:13px;color:var(--text-mid);">${driver.phone ? escapeHtml(driver.phone) : '—'}</span>
+        <span class="${driver.hasPin ? 'pin-set' : 'pin-none'}">${driver.hasPin ? '•••• set' : '— none'}</span>
+        <span class="badge ${driver.active ? 'badge-active' : 'badge-ended'}">${driver.active ? 'Active' : 'Inactive'}</span>
+        <span class="last-active">${formatRelative(driver.lastActive)}</span>
+        <div class="reset-pin-inline">
+          <input type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="PIN" class="input pin-input" />
+          <button class="btn-link reset-pin-btn">Reset PIN</button>
+          <button class="btn-link toggle-active-btn" style="color:${driver.active ? 'var(--disconnected-text)' : 'var(--active-text)'};">
             ${driver.active ? 'Deactivate' : 'Reactivate'}
           </button>
         </div>
-        <div class="row-error hidden basis-full text-xs text-red-300"></div>
+        <div class="row-error hidden"></div>
       `;
 
-      const rowError = card.querySelector('.row-error');
+      const rowError = row.querySelector('.row-error');
       function showRowError(message) {
         rowError.textContent = message;
         rowError.classList.remove('hidden');
       }
 
-      card.querySelector('.reset-pin-btn').addEventListener('click', async () => {
-        const pinInput = card.querySelector('.pin-input');
+      row.querySelector('.reset-pin-btn').addEventListener('click', async () => {
+        const pinInput = row.querySelector('.pin-input');
         const pin = pinInput.value.trim();
         if (!/^\d{4}$/.test(pin)) {
           showRowError('Enter a 4-digit PIN to reset.');
@@ -144,9 +236,10 @@
         }
         pinInput.value = '';
         rowError.classList.add('hidden');
+        loadDrivers();
       });
 
-      card.querySelector('.toggle-active-btn').addEventListener('click', async () => {
+      row.querySelector('.toggle-active-btn').addEventListener('click', async () => {
         const res = await fetch(`/api/drivers/${driver.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -160,7 +253,7 @@
         loadDrivers();
       });
 
-      driverTable.appendChild(card);
+      driverTable.appendChild(row);
     });
   }
 
@@ -171,11 +264,13 @@
     const code = document.getElementById('newCode').value.trim();
     const displayName = document.getElementById('newDisplayName').value.trim();
     const pin = document.getElementById('newPin').value.trim();
+    const phone = document.getElementById('newPhone').value.trim();
+    const vehicleId = document.getElementById('newVehicleId').value.trim();
 
     const res = await fetch('/api/drivers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, displayName, pin }),
+      body: JSON.stringify({ code, displayName, pin, phone, vehicleId }),
     });
 
     if (!res.ok) {

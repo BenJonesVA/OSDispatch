@@ -14,6 +14,11 @@ ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS pin_hash TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT true;
 
+-- Optional driver metadata shown in the management UI. Nullable — neither is
+-- required for login or dispatch functionality.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS vehicle_id TEXT;
+
 -- Only dispatchers are required to have a password_hash. Added NOT VALID so
 -- upgrading an existing database doesn't fail validation against driver rows
 -- that predate the PIN feature (their pin_hash starts out NULL until reset).

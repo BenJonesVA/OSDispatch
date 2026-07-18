@@ -3,7 +3,9 @@
     "username": "driver1",
     "pin": "1234",
     "role": "driver",
-    "displayName": "Alex R."
+    "displayName": "Alex R.",
+    "phone": "(415) 555-0100",
+    "vehicleId": "VAN-101"
   },
   {
     "username": "dispatch1",
