@@ -138,13 +138,26 @@
 
   function emitLocation() {
     if (!latestPosition || !socket) return;
-    const { latitude, longitude } = latestPosition.coords;
+
+    // A GPS fix delivered while the tab was backgrounded/suspended can sit in
+    // latestPosition long after it was captured. Sending it stamped with the
+    // current time pairs a stale position with a fresh timestamp — over a
+    // short interval that reads as an impossible speed and draws a straight
+    // line to wherever the driver actually is now. Wait for a fresh fix
+    // instead of bridging the gap with a bad guess.
+    const fixAgeMs = Date.now() - latestPosition.timestamp;
+    if (fixAgeMs > EMIT_INTERVAL_MS * 1.5) return;
+
+    const { latitude, longitude, speed } = latestPosition.coords;
     // driverId/name are not sent — the server derives identity from the
     // authenticated session so a client can never spoof another driver.
     socket.emit('location_update', {
       latitude,
       longitude,
       timestamp: Date.now(),
+      // coords.speed (m/s) is the device's own GPS-derived speed when
+      // available — more reliable than deriving it from position deltas.
+      speed: typeof speed === 'number' ? speed : null,
     });
     updateCount += 1;
     updateCountEl.textContent = 'Updates sent: ' + updateCount;

@@ -64,6 +64,10 @@ Copy `.env.example` to `.env` and adjust as needed:
 - `UNITS` — `metric` (default) or `imperial`. Distance/speed are always
   computed and stored in km / km/h regardless of this setting; it only
   affects how the dispatch dashboard displays them.
+- `SPEED_LIMIT_LOOKUP` — `true` (default) or `false`. When enabled, each ping
+  is tagged with the posted speed limit for the nearest tagged road (see
+  below); set to `false` to disable if the app container has no outbound
+  internet access.
 
 ## TLS / hostname
 
@@ -89,6 +93,14 @@ matter what. `localhost` testing works either way.
 - Driver "deletion" is a soft **deactivate**, not a hard delete — this
   preserves their historical `location_pings` rows (which reference the
   driver by foreign key) for reporting/audit.
+- **Speed limits** are looked up from OpenStreetMap's public Overpass API —
+  the nearest tagged road within 25m of each ping, cached to a ~111m grid and
+  globally rate-limited to stay well under Overpass's fair-use policy. This
+  means it's best-effort, not exhaustive: unmapped/untagged roads, cache
+  misses under load, or an unreachable Overpass instance all just leave that
+  ping's speed limit `null` rather than blocking or retrying aggressively.
+  There's no OSM/Valhalla map-matching pipeline behind this — it's a nearby-
+  way lookup, not routing.
 
 ## Project layout
 

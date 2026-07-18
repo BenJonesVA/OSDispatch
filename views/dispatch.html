@@ -86,6 +86,7 @@
     return km.toFixed(2) + ' km';
   }
   function formatSpeed(kmh) {
+    if (kmh === null || kmh === undefined) return 'n/a';
     if (units === 'imperial') return (kmh * 0.621371).toFixed(1) + ' mph';
     return kmh.toFixed(1) + ' km/h';
   }

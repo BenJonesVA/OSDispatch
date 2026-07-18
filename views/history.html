@@ -55,6 +55,7 @@
         <span>Distance: <span id="summaryDistance" class="font-semibold text-slate-100"></span></span>
         <span>Avg speed: <span id="summaryAvgSpeed" class="font-semibold text-slate-100"></span></span>
         <span>Max speed: <span id="summaryMaxSpeed" class="font-semibold text-slate-100"></span></span>
+        <span>Over limit: <span id="summarySpeeding" class="font-semibold text-amber-400"></span></span>
       </div>
     </form>
 
@@ -85,21 +86,70 @@
     return kmh.toFixed(1) + ' km/h';
   }
 
-  let routeOutline = null;
-  let routeAccent = null;
+  // Matches the server's HISTORY_GAP_MS: a gap this long means the
+  // connection dropped for a real stretch, not just a missed ping, so the
+  // route is drawn as separate segments instead of one continuous line
+  // bridging an unknown path.
+  const HISTORY_GAP_MS = 90_000;
+  // Small buffer above the posted limit before a point is flagged, so
+  // ordinary GPS/sensor noise around the limit doesn't read as speeding.
+  const SPEEDING_MARGIN_KMH = 8;
+
+  let routeLayers = [];
+  let speedMarkers = [];
 
   function clearRoute() {
-    if (routeOutline) { map.removeLayer(routeOutline); routeOutline = null; }
-    if (routeAccent) { map.removeLayer(routeAccent); routeAccent = null; }
+    routeLayers.forEach((layer) => map.removeLayer(layer));
+    routeLayers = [];
+    speedMarkers.forEach((marker) => map.removeLayer(marker));
+    speedMarkers = [];
+  }
+
+  function splitIntoSegments(points) {
+    const segments = [];
+    let current = [];
+    for (let i = 0; i < points.length; i++) {
+      if (i > 0 && new Date(points[i].recordedAt) - new Date(points[i - 1].recordedAt) > HISTORY_GAP_MS) {
+        segments.push(current);
+        current = [];
+      }
+      current.push(points[i]);
+    }
+    if (current.length) segments.push(current);
+    return segments;
   }
 
   function renderRoute(points) {
     clearRoute();
     if (points.length < 2) return;
-    const latlngs = points.map((p) => [p.latitude, p.longitude]);
-    routeOutline = L.polyline(latlngs, { color: '#ffffff', weight: 7, opacity: 0.7 }).addTo(map);
-    routeAccent = L.polyline(latlngs, { color: '#38bdf8', weight: 4, opacity: 0.9 }).addTo(map);
-    map.fitBounds(routeOutline.getBounds(), { padding: [40, 40] });
+
+    const segments = splitIntoSegments(points);
+    const bounds = [];
+    segments.forEach((segment) => {
+      if (segment.length < 2) return;
+      const latlngs = segment.map((p) => [p.latitude, p.longitude]);
+      routeLayers.push(L.polyline(latlngs, { color: '#ffffff', weight: 7, opacity: 0.7 }).addTo(map));
+      routeLayers.push(L.polyline(latlngs, { color: '#38bdf8', weight: 4, opacity: 0.9 }).addTo(map));
+      bounds.push(...latlngs);
+    });
+
+    points
+      .filter((p) => typeof p.speedKmh === 'number' && typeof p.speedLimitKmh === 'number'
+        && p.speedKmh > p.speedLimitKmh + SPEEDING_MARGIN_KMH)
+      .forEach((p) => {
+        const marker = L.circleMarker([p.latitude, p.longitude], {
+          radius: 6, color: '#f59e0b', weight: 2, fillColor: '#f59e0b', fillOpacity: 0.8,
+        }).addTo(map);
+        marker.bindPopup(
+          `<div class="text-sm">
+            <div>${formatSpeed(p.speedKmh)} in a ${formatSpeed(p.speedLimitKmh)} zone</div>
+            <div>${new Date(p.recordedAt).toLocaleString()}</div>
+          </div>`
+        );
+        speedMarkers.push(marker);
+      });
+
+    if (bounds.length) map.fitBounds(L.latLngBounds(bounds), { padding: [40, 40] });
   }
 
   function showStatus(message) {
@@ -161,6 +211,11 @@
     document.getElementById('summaryDistance').textContent = formatDistance(data.summary.distanceKm);
     document.getElementById('summaryAvgSpeed').textContent = formatSpeed(data.summary.avgSpeedKmh);
     document.getElementById('summaryMaxSpeed').textContent = formatSpeed(data.summary.maxSpeedKmh);
+    const speedingCount = data.points.filter((p) =>
+      typeof p.speedKmh === 'number' && typeof p.speedLimitKmh === 'number'
+      && p.speedKmh > p.speedLimitKmh + SPEEDING_MARGIN_KMH
+    ).length;
+    document.getElementById('summarySpeeding').textContent = speedingCount;
     summary.classList.remove('hidden');
 
     renderRoute(data.points);

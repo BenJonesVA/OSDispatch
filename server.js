@@ -23,6 +23,11 @@ const HISTORY_LENGTH = 10;
 // disconnected rather than having deliberately ended their shift.
 const STALE_TIMEOUT_MS = Number(process.env.STALE_TIMEOUT_MS) || 20_000;
 const STALE_SWEEP_INTERVAL_MS = 5_000;
+// A single stale/glitchy GPS fix can imply a physically impossible speed
+// (e.g. a position jump paired with a short time delta) — anything above
+// this is treated as unknown rather than let it spike the dashboard/history.
+// Comfortably above any real vehicle's cruising speed, including highways.
+const MAX_PLAUSIBLE_SPEED_KMH = 200;
 
 // Trust X-Forwarded-* headers from any private-network hop (Docker containers,
 // including a TLS-terminating proxy like Nginx Proxy Manager sitting in front
@@ -342,7 +347,7 @@ app.get('/api/history', requireRole('dispatcher'), async (req, res) => {
   if (!driverResult.rows[0]) return res.status(404).json({ error: 'Driver not found.' });
 
   const pingsResult = await pool.query(
-    `SELECT latitude, longitude, recorded_at, speed_kmh
+    `SELECT latitude, longitude, recorded_at, speed_kmh, speed_limit_kmh
      FROM location_pings
      WHERE user_id = $1 AND recorded_at BETWEEN $2 AND $3
      ORDER BY recorded_at ASC`,
@@ -353,19 +358,29 @@ app.get('/api/history', requireRole('dispatcher'), async (req, res) => {
     latitude: row.latitude,
     longitude: row.longitude,
     recordedAt: row.recorded_at,
-    speedKmh: row.speed_kmh,
+    // Clamped the same way live telemetry is: a handful of pings recorded
+    // before that guard existed can still carry an implausible spike (e.g. a
+    // stale-fix artifact from a reconnect), and those shouldn't inflate the
+    // max-speed figure or get flagged as a real speeding event.
+    speedKmh:
+      typeof row.speed_kmh === 'number' && row.speed_kmh >= 0 && row.speed_kmh <= MAX_PLAUSIBLE_SPEED_KMH
+        ? row.speed_kmh
+        : null,
+    speedLimitKmh: row.speed_limit_kmh,
   }));
 
-  // Distance is recomputed from the raw historical points (not read from any
-  // stored total) so it reflects exactly the requested date range.
+  // A gap this long (well past the ~7s cadence and a couple of missed beats)
+  // means the connection dropped for a real stretch, not just a missed ping
+  // — the path in between is unknown, so it's excluded from the distance
+  // total rather than summed as a straight line between the two endpoints.
+  const HISTORY_GAP_MS = 90_000;
   let distanceKm = 0;
   for (let i = 1; i < points.length; i++) {
+    const gapMs = new Date(points[i].recordedAt) - new Date(points[i - 1].recordedAt);
+    if (gapMs > HISTORY_GAP_MS) continue;
     distanceKm += haversineDistanceKm(points[i - 1], points[i]);
   }
 
-  // speed_kmh is null for any ping recorded before that column existed —
-  // excluded here rather than treated as 0, so old gaps don't drag the
-  // average down or hide a real max from before the gap.
   const knownSpeeds = points.map((p) => p.speedKmh).filter((s) => typeof s === 'number');
   const avgSpeedKmh = knownSpeeds.length ? knownSpeeds.reduce((a, b) => a + b, 0) / knownSpeeds.length : null;
   const maxSpeedKmh = knownSpeeds.length ? Math.max(...knownSpeeds) : null;
@@ -428,13 +443,23 @@ function computeTelemetry(history) {
     distanceKm += haversineDistanceKm(history[i - 1], history[i]);
   }
 
-  let speedKmh = 0;
-  if (history.length >= 2) {
+  // Prefer the device's own GPS-derived speed (Doppler-based, not subject to
+  // position-differencing artifacts) when the client supplied one; otherwise
+  // fall back to distance/time between the last two points. Unknown (not an
+  // artificial 0) until we have something to base it on.
+  let speedKmh = null;
+  const curr = history[history.length - 1];
+  if (curr && typeof curr.deviceSpeedKmh === 'number') {
+    speedKmh = curr.deviceSpeedKmh;
+  } else if (history.length >= 2) {
     const prev = history[history.length - 2];
-    const curr = history[history.length - 1];
     const segmentKm = haversineDistanceKm(prev, curr);
     const deltaHours = (curr.timestamp - prev.timestamp) / 1000 / 3600;
-    speedKmh = deltaHours > 0 ? segmentKm / deltaHours : 0;
+    speedKmh = deltaHours > 0 ? segmentKm / deltaHours : null;
+  }
+
+  if (speedKmh !== null && (speedKmh < 0 || speedKmh > MAX_PLAUSIBLE_SPEED_KMH)) {
+    speedKmh = null;
   }
 
   return { distanceKm, speedKmh };
@@ -459,16 +484,103 @@ function broadcastSnapshot() {
   );
 }
 
-async function insertPing(userId, latitude, longitude, recordedAtMs, speedKmh) {
+async function insertPing(userId, latitude, longitude, recordedAtMs, speedKmh, speedLimitKmh) {
   try {
     await pool.query(
-      `INSERT INTO location_pings (user_id, latitude, longitude, recorded_at, speed_kmh)
-       VALUES ($1, $2, $3, to_timestamp($4 / 1000.0), $5)`,
-      [userId, latitude, longitude, recordedAtMs, speedKmh]
+      `INSERT INTO location_pings (user_id, latitude, longitude, recorded_at, speed_kmh, speed_limit_kmh)
+       VALUES ($1, $2, $3, to_timestamp($4 / 1000.0), $5, $6)`,
+      [userId, latitude, longitude, recordedAtMs, speedKmh, speedLimitKmh]
     );
   } catch (err) {
     console.error('Failed to persist location ping:', err.message);
   }
+}
+
+// --- Speed limit lookup ------------------------------------------------
+// Best-effort "what's the posted limit on the nearest tagged road" lookup
+// against the free public Overpass API (OpenStreetMap data) — deliberately
+// not a full map-matching/routing pipeline (out of scope by request), just
+// enough to tag each ping with a limit to compare its speed against.
+const SPEED_LIMIT_LOOKUP_ENABLED = process.env.SPEED_LIMIT_LOOKUP !== 'false';
+const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+const SPEED_LIMIT_LOOKUP_RADIUS_M = 25;
+const SPEED_LIMIT_HIT_TTL_MS = 24 * 60 * 60 * 1000; // posted limits rarely change
+const SPEED_LIMIT_MISS_TTL_MS = 10 * 60 * 1000; // retry sooner after a miss/failure
+// Overpass's public instance has a fair-use policy — this keeps us to well
+// under one request/second regardless of how many drivers are pinging.
+const SPEED_LIMIT_MIN_INTERVAL_MS = 1000;
+
+// Keyed to ~3 decimal places (~111m grid) rather than a tighter grid: roads
+// keep the same posted limit over much longer stretches than that, and a
+// coarser grid means far more cache hits per Overpass request, which matters
+// a lot given the global throttle above.
+function speedLimitCacheKey(latitude, longitude) {
+  return `${latitude.toFixed(3)},${longitude.toFixed(3)}`;
+}
+
+const speedLimitCache = new Map(); // key -> { speedLimitKmh, expiresAt }
+let lastSpeedLimitRequestAt = 0;
+
+function parseMaxSpeedKmh(raw) {
+  if (typeof raw !== 'string') return null;
+  const mphMatch = raw.match(/^(\d+(\.\d+)?)\s*mph$/i);
+  if (mphMatch) return Number(mphMatch[1]) * 1.60934;
+  const kmhMatch = raw.match(/^(\d+(\.\d+)?)(\s*km\/h)?$/i);
+  if (kmhMatch) return Number(kmhMatch[1]);
+  return null; // e.g. "national", "signals", "none" — not a numeric limit
+}
+
+async function fetchSpeedLimitKmh(latitude, longitude) {
+  const query =
+    `[out:json][timeout:5];` +
+    `way(around:${SPEED_LIMIT_LOOKUP_RADIUS_M},${latitude},${longitude})[highway][maxspeed];` +
+    `out tags 1;`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  try {
+    const res = await fetch(OVERPASS_URL, {
+      method: 'POST',
+      // Overpass's public instance returns 406 Not Acceptable to requests
+      // with no User-Agent at all (Node's fetch sends none by default).
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'OSDispatch/1.0 (self-hosted driver dispatch tracker)',
+      },
+      body: 'data=' + encodeURIComponent(query),
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const way = data.elements && data.elements[0];
+    return way ? parseMaxSpeedKmh(way.tags && way.tags.maxspeed) : null;
+  } catch (err) {
+    console.error('Speed limit lookup failed:', err.message);
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function getSpeedLimitKmh(latitude, longitude) {
+  if (!SPEED_LIMIT_LOOKUP_ENABLED) return null;
+
+  const key = speedLimitCacheKey(latitude, longitude);
+  const cached = speedLimitCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.speedLimitKmh;
+
+  const now = Date.now();
+  if (now - lastSpeedLimitRequestAt < SPEED_LIMIT_MIN_INTERVAL_MS) {
+    // Throttled — skip this ping's lookup rather than queue it up; the next
+    // ping (or a nearby cache hit) will pick it up instead.
+    return cached ? cached.speedLimitKmh : null;
+  }
+  lastSpeedLimitRequestAt = now;
+
+  const speedLimitKmh = await fetchSpeedLimitKmh(latitude, longitude);
+  const ttl = speedLimitKmh !== null ? SPEED_LIMIT_HIT_TTL_MS : SPEED_LIMIT_MISS_TTL_MS;
+  speedLimitCache.set(key, { speedLimitKmh, expiresAt: Date.now() + ttl });
+  return speedLimitKmh;
 }
 
 // Share the session middleware with Socket.io so socket.request.session is
@@ -494,7 +606,7 @@ io.on('connection', (socket) => {
   socket.on('location_update', (payload) => {
     if (userSession.user.role !== 'driver') return;
 
-    const { latitude, longitude, timestamp } = payload || {};
+    const { latitude, longitude, timestamp, speed } = payload || {};
     if (
       typeof latitude !== 'number' ||
       typeof longitude !== 'number' ||
@@ -502,6 +614,9 @@ io.on('connection', (socket) => {
     ) {
       return; // malformed payload, drop silently
     }
+    // Device-reported speed (m/s, from the Geolocation API's coords.speed) ->
+    // km/h, when the client had one to send.
+    const deviceSpeedKmh = typeof speed === 'number' && speed >= 0 ? speed * 3.6 : null;
 
     // Identity always comes from the authenticated session, never the
     // client payload — this is what stops one driver from spoofing another.
@@ -509,6 +624,12 @@ io.on('connection', (socket) => {
     const name = userSession.user.displayName;
 
     let driver = drivers.get(driverId);
+    // A ping arriving while the driver wasn't 'active' (a fresh shift start,
+    // or a reconnect after going silent) starts a new trail segment instead
+    // of appending to the old one — we have no idea what path was taken
+    // during the gap, so we don't draw a breadcrumb line across it or let it
+    // factor into a distance/speed computed against the stale prior point.
+    const isNewSegment = !driver || driver.status !== 'active';
     if (!driver) {
       driver = {
         driverId,
@@ -516,7 +637,7 @@ io.on('connection', (socket) => {
         status: 'active',
         history: [],
         distanceKm: 0,
-        speedKmh: 0,
+        speedKmh: null,
         lastSeen: timestamp,
       };
       drivers.set(driverId, driver);
@@ -525,7 +646,10 @@ io.on('connection', (socket) => {
     driver.name = name;
     driver.status = 'active';
     driver.lastSeen = timestamp;
-    driver.history.push({ latitude, longitude, timestamp });
+    if (isNewSegment) {
+      driver.history = [];
+    }
+    driver.history.push({ latitude, longitude, timestamp, deviceSpeedKmh });
     if (driver.history.length > HISTORY_LENGTH) {
       driver.history.shift();
     }
@@ -536,7 +660,12 @@ io.on('connection', (socket) => {
 
     io.to('dispatch').emit('driver_update', publicDriverState(driver));
 
-    insertPing(userSession.user.id, latitude, longitude, timestamp, driver.speedKmh);
+    const speedKmhToStore = driver.speedKmh;
+    getSpeedLimitKmh(latitude, longitude)
+      .catch(() => null)
+      .then((speedLimitKmh) =>
+        insertPing(userSession.user.id, latitude, longitude, timestamp, speedKmhToStore, speedLimitKmh)
+      );
   });
 
   socket.on('end_shift', () => {

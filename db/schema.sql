@@ -35,5 +35,11 @@ CREATE TABLE IF NOT EXISTS location_pings (
 -- column existed have no historical speed and are never backfilled.
 ALTER TABLE location_pings ADD COLUMN IF NOT EXISTS speed_kmh DOUBLE PRECISION;
 
+-- Posted speed limit (km/h) for the road nearest this ping, best-effort
+-- looked up from OpenStreetMap at insert time. Null when no tagged road was
+-- found nearby, the lookup was rate-limited/failed, or the ping predates
+-- this column.
+ALTER TABLE location_pings ADD COLUMN IF NOT EXISTS speed_limit_kmh DOUBLE PRECISION;
+
 CREATE INDEX IF NOT EXISTS idx_location_pings_user_id_recorded_at
   ON location_pings (user_id, recorded_at);
