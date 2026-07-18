@@ -343,6 +343,50 @@ app.patch('/api/drivers/:id', requireRole('dispatcher'), async (req, res) => {
   res.json(mapDriverRow(result.rows[0]));
 });
 
+app.delete('/api/drivers/:id', requireRole('dispatcher'), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid driver id.' });
+
+  const driverResult = await pool.query(`SELECT id FROM users WHERE id = $1 AND role = 'driver'`, [id]);
+  if (!driverResult.rows[0]) return res.status(404).json({ error: 'Driver not found.' });
+
+  // Deleting straight away would silently wipe a driver's trip history along
+  // with them (location_pings has no ON DELETE CASCADE) — require the caller
+  // to explicitly opt into that via purgeHistory rather than default to it.
+  const { purgeHistory } = req.body || {};
+  const historyResult = await pool.query(
+    'SELECT EXISTS(SELECT 1 FROM location_pings WHERE user_id = $1) AS has_history',
+    [id]
+  );
+  if (historyResult.rows[0].has_history && purgeHistory !== true) {
+    return res.status(409).json({
+      error: 'This driver has recorded location history. Confirm to permanently delete it along with the driver.',
+      hasHistory: true,
+    });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM location_pings WHERE user_id = $1', [id]);
+    await client.query(`DELETE FROM users WHERE id = $1 AND role = 'driver'`, [id]);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Failed to delete driver:', err.message);
+    return res.status(500).json({ error: 'Failed to delete driver.' });
+  } finally {
+    client.release();
+  }
+
+  // Also drop any live in-memory tracking state so a deleted driver doesn't
+  // linger on the dashboard until the next stale-sweep or reconnect.
+  drivers.delete(String(id));
+  broadcastSnapshot();
+
+  res.json({ ok: true });
+});
+
 // Weak passwords are still bcrypt-hashed, but a short one is trivial to
 // brute-force against a login form that (unlike the driver PIN endpoint)
 // has no dedicated rate limiter — so worth rejecting at creation time.
@@ -445,6 +489,24 @@ app.patch('/api/dispatchers/:id', requireRole('dispatcher'), async (req, res) =>
 
   if (!result.rows[0]) return res.status(404).json({ error: 'Dispatcher not found.' });
   res.json(mapDispatcherRow(result.rows[0]));
+});
+
+app.delete('/api/dispatchers/:id', requireRole('dispatcher'), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid dispatcher id.' });
+
+  // Same reasoning as the deactivate guard: without this, a dispatcher could
+  // delete their own only remaining account and get locked out for good.
+  if (id === req.session.user.id) {
+    return res.status(400).json({ error: 'You cannot delete your own account.' });
+  }
+
+  const result = await pool.query(
+    `DELETE FROM users WHERE id = $1 AND role = 'dispatcher' RETURNING id`,
+    [id]
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: 'Dispatcher not found.' });
+  res.json({ ok: true });
 });
 
 app.get('/dispatch/history', requireRole('dispatcher'), (req, res) => {

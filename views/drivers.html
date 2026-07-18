@@ -21,7 +21,7 @@
   .panel-heading .text-low { font-weight: 500; }
 
   .table-header, .table-row {
-    display: grid; grid-template-columns: 1.6fr 1.1fr 0.9fr 0.9fr 1fr 1.1fr; gap: 12px; align-items: center;
+    display: grid; grid-template-columns: 1.5fr 1fr 0.8fr 0.8fr 0.9fr 1.7fr; gap: 12px; align-items: center;
   }
   .table-header {
     padding: 0 10px 10px; font-family: var(--font-mono); font-size: 11px; color: var(--text-low);
@@ -39,7 +39,7 @@
 
   .row-error { grid-column: 1 / -1; font-size: 12px; color: var(--disconnected-text); margin-top: 6px; }
   .row-error.hidden { display: none; }
-  .reset-pin-inline { display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+  .reset-pin-inline { display: flex; gap: 6px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
   .reset-pin-inline .input { width: 68px; height: 30px; padding: 0 6px; font-size: 12px; }
 
   .field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 16px; }
@@ -207,6 +207,7 @@
           <button class="btn-link toggle-active-btn" style="color:${driver.active ? 'var(--disconnected-text)' : 'var(--active-text)'};">
             ${driver.active ? 'Deactivate' : 'Reactivate'}
           </button>
+          <button class="btn-link delete-btn" style="color:var(--disconnected-text);">Delete</button>
         </div>
         <div class="row-error hidden"></div>
       `;
@@ -248,6 +249,36 @@
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
           showRowError(body.error || 'Failed to update driver.');
+          return;
+        }
+        loadDrivers();
+      });
+
+      row.querySelector('.delete-btn').addEventListener('click', async () => {
+        if (!confirm(`Permanently delete ${driver.displayName} (${driver.code})? This cannot be undone.`)) {
+          return;
+        }
+
+        let res = await fetch(`/api/drivers/${driver.id}`, { method: 'DELETE' });
+
+        if (res.status === 409) {
+          const body = await res.json().catch(() => ({}));
+          if (body.hasHistory && confirm(
+            `${driver.displayName} has recorded location history. Delete the driver AND permanently erase that history?`
+          )) {
+            res = await fetch(`/api/drivers/${driver.id}`, {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ purgeHistory: true }),
+            });
+          } else {
+            return;
+          }
+        }
+
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          showRowError(body.error || 'Failed to delete driver.');
           return;
         }
         loadDrivers();

@@ -21,7 +21,7 @@
   .panel-heading .text-low { font-weight: 500; }
 
   .table-header, .table-row {
-    display: grid; grid-template-columns: 2fr 1fr 1.4fr; gap: 12px; align-items: center;
+    display: grid; grid-template-columns: 1.6fr 0.8fr 2fr; gap: 12px; align-items: center;
   }
   .table-header {
     padding: 0 10px 10px; font-family: var(--font-mono); font-size: 11px; color: var(--text-low);
@@ -36,7 +36,7 @@
 
   .row-error { grid-column: 1 / -1; font-size: 12px; color: var(--disconnected-text); margin-top: 6px; }
   .row-error.hidden { display: none; }
-  .reset-pw-inline { display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+  .reset-pw-inline { display: flex; gap: 6px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
   .reset-pw-inline .input { width: 120px; height: 30px; padding: 0 6px; font-size: 12px; }
 
   .field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 16px; }
@@ -168,7 +168,10 @@
           <input type="text" placeholder="New password" class="input password-input" autocomplete="new-password" />
           <button class="btn-link reset-pw-btn">Reset password</button>
           <button class="btn-link toggle-active-btn" ${isSelf ? 'disabled title="You cannot deactivate your own account."' : ''} style="color:${dispatcher.active ? 'var(--disconnected-text)' : 'var(--active-text)'};">
-            ${dispatcher.active ? 'Remove' : 'Restore'}
+            ${dispatcher.active ? 'Deactivate' : 'Reactivate'}
+          </button>
+          <button class="btn-link delete-btn" ${isSelf ? 'disabled title="You cannot delete your own account."' : ''} style="color:var(--disconnected-text);">
+            Delete
           </button>
         </div>
         <div class="row-error hidden"></div>
@@ -212,6 +215,20 @@
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
           showRowError(body.error || 'Failed to update dispatcher.');
+          return;
+        }
+        loadDispatchers();
+      });
+
+      row.querySelector('.delete-btn').addEventListener('click', async () => {
+        if (isSelf) return;
+        if (!confirm(`Permanently delete ${dispatcher.displayName} (${dispatcher.username})? This cannot be undone.`)) {
+          return;
+        }
+        const res = await fetch(`/api/dispatchers/${dispatcher.id}`, { method: 'DELETE' });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          showRowError(body.error || 'Failed to delete dispatcher.');
           return;
         }
         loadDispatchers();
