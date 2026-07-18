@@ -32,8 +32,16 @@ app.use(
         styleSrc: ["'self'", "'unsafe-inline'", 'https://unpkg.com'],
         imgSrc: ["'self'", 'data:', 'https://*.basemaps.cartocdn.com'],
         connectSrc: ["'self'", 'ws:', 'wss:'],
+        // Helmet's default CSP includes this directive, which tells browsers to
+        // silently rewrite http:// sub-resource requests (fetch/XHR/forms) to
+        // https:// — breaks every fetch() call on a deliberately plain-HTTP
+        // deployment like this one. Explicitly nulled out to disable it.
+        upgradeInsecureRequests: null,
       },
     },
+    // Also a Helmet default; forcing HSTS on a plain-HTTP-only server is the
+    // same footgun in a different header — disabled for the same reason.
+    hsts: false,
   })
 );
 
