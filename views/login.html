@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sign In — Dispatch Tracker</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="icon" href="data:," />
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex items-center justify-center px-4">
+
+  <div class="w-full max-w-sm bg-slate-800 rounded-2xl p-6 shadow-lg space-y-5">
+    <div class="text-center space-y-1">
+      <h1 class="text-xl font-bold">Dispatch Tracker</h1>
+      <p class="text-slate-400 text-sm">Sign in to continue</p>
+    </div>
+
+    <div class="grid grid-cols-2 gap-1 bg-slate-900 rounded-xl p-1">
+      <button id="tabDriver" type="button" class="py-2 rounded-lg text-sm font-medium transition-colors">Driver</button>
+      <button id="tabDispatcher" type="button" class="py-2 rounded-lg text-sm font-medium transition-colors">Dispatcher</button>
+    </div>
+
+    <form id="driverForm" class="space-y-4">
+      <div>
+        <label for="driverCode" class="block text-sm font-medium text-slate-300 mb-1">Driver code</label>
+        <input id="driverCode" type="text" autocomplete="username" required
+          class="w-full rounded-lg bg-slate-700 border border-slate-600 px-3 py-2 text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500" />
+      </div>
+      <div>
+        <label for="driverPin" class="block text-sm font-medium text-slate-300 mb-1">4-digit PIN</label>
+        <input id="driverPin" type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" required
+          class="w-full rounded-lg bg-slate-700 border border-slate-600 px-3 py-2 text-slate-100 tracking-[0.5em] text-center text-lg focus:outline-none focus:ring-2 focus:ring-sky-500" />
+      </div>
+      <button type="submit"
+        class="w-full py-2.5 rounded-xl font-semibold bg-sky-600 hover:bg-sky-500 active:bg-sky-700 transition-colors">
+        Sign In
+      </button>
+    </form>
+
+    <form id="dispatcherForm" class="space-y-4 hidden">
+      <div>
+        <label for="username" class="block text-sm font-medium text-slate-300 mb-1">Username</label>
+        <input id="username" type="text" autocomplete="username"
+          class="w-full rounded-lg bg-slate-700 border border-slate-600 px-3 py-2 text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500" />
+      </div>
+      <div>
+        <label for="password" class="block text-sm font-medium text-slate-300 mb-1">Password</label>
+        <input id="password" type="password" autocomplete="current-password"
+          class="w-full rounded-lg bg-slate-700 border border-slate-600 px-3 py-2 text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500" />
+      </div>
+      <button type="submit"
+        class="w-full py-2.5 rounded-xl font-semibold bg-sky-600 hover:bg-sky-500 active:bg-sky-700 transition-colors">
+        Sign In
+      </button>
+    </form>
+
+    <div id="errorBanner" class="hidden bg-red-900/60 border border-red-700 text-red-100 text-sm rounded-xl p-3"></div>
+  </div>
+
+<script>
+(function () {
+  const tabDriver = document.getElementById('tabDriver');
+  const tabDispatcher = document.getElementById('tabDispatcher');
+  const driverForm = document.getElementById('driverForm');
+  const dispatcherForm = document.getElementById('dispatcherForm');
+  const errorBanner = document.getElementById('errorBanner');
+
+  const activeTabCls = ['bg-sky-600', 'text-white'];
+  const inactiveTabCls = ['text-slate-400', 'hover:text-slate-200'];
+
+  function setTab(tab) {
+    errorBanner.classList.add('hidden');
+    const isDriver = tab === 'driver';
+    driverForm.classList.toggle('hidden', !isDriver);
+    dispatcherForm.classList.toggle('hidden', isDriver);
+    tabDriver.classList.toggle('bg-sky-600', isDriver);
+    tabDriver.classList.toggle('text-white', isDriver);
+    tabDriver.classList.toggle('text-slate-400', !isDriver);
+    tabDispatcher.classList.toggle('bg-sky-600', !isDriver);
+    tabDispatcher.classList.toggle('text-white', !isDriver);
+    tabDispatcher.classList.toggle('text-slate-400', isDriver);
+  }
+
+  tabDriver.addEventListener('click', () => setTab('driver'));
+  tabDispatcher.addEventListener('click', () => setTab('dispatcher'));
+  setTab('driver');
+
+  function showError(message) {
+    errorBanner.textContent = message;
+    errorBanner.classList.remove('hidden');
+  }
+
+  async function submitLogin(url, body) {
+    errorBanner.classList.add('hidden');
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        showError(errBody.error || 'Sign in failed.');
+        return;
+      }
+      const { role } = await res.json();
+      window.location.href = role === 'dispatcher' ? '/dispatch' : '/driver';
+    } catch (err) {
+      showError('Unable to reach the server. Please try again.');
+    }
+  }
+
+  driverForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    submitLogin('/api/login/driver', {
+      code: document.getElementById('driverCode').value.trim(),
+      pin: document.getElementById('driverPin').value.trim(),
+    });
+  });
+
+  dispatcherForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    submitLogin('/api/login', {
+      username: document.getElementById('username').value.trim(),
+      password: document.getElementById('password').value,
+    });
+  });
+})();
+</script>
+</body>
+</html>

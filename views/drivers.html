@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Manage Drivers — Dispatch Tracker</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="icon" href="data:," />
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+
+<header class="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-800">
+  <h1 class="text-lg font-bold">Manage Drivers</h1>
+  <div class="flex items-center gap-3">
+    <a href="/dispatch" class="text-xs text-slate-400 hover:text-slate-200 underline">Back to Dashboard</a>
+    <button id="logoutBtn" class="text-xs text-slate-400 hover:text-slate-200 underline">Log out</button>
+  </div>
+</header>
+
+<main class="max-w-3xl mx-auto p-4 space-y-6">
+
+  <section class="bg-slate-800 rounded-2xl p-5 space-y-4 shadow-lg">
+    <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wide">Add Driver</h2>
+    <form id="addForm" class="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+      <div>
+        <label class="block text-xs text-slate-400 mb-1">Driver code</label>
+        <input id="newCode" type="text" required
+          class="w-full rounded-lg bg-slate-700 border border-slate-600 px-3 py-2 text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-400 mb-1">Display name</label>
+        <input id="newDisplayName" type="text" required
+          class="w-full rounded-lg bg-slate-700 border border-slate-600 px-3 py-2 text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-400 mb-1">4-digit PIN</label>
+        <div class="flex gap-1">
+          <input id="newPin" type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="4" required
+            class="w-full rounded-lg bg-slate-700 border border-slate-600 px-3 py-2 text-slate-100 text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-sky-500" />
+          <button type="button" id="generatePin" title="Generate a random PIN"
+            class="px-2 rounded-lg bg-slate-600 hover:bg-slate-500 text-xs shrink-0">Gen</button>
+        </div>
+      </div>
+      <button type="submit"
+        class="py-2.5 rounded-xl font-semibold bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 transition-colors">
+        Add Driver
+      </button>
+    </form>
+    <div id="addError" class="hidden bg-red-900/60 border border-red-700 text-red-100 text-sm rounded-xl p-3"></div>
+  </section>
+
+  <section class="space-y-2">
+    <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wide px-1">Drivers</h2>
+    <div id="driverTable" class="space-y-2"></div>
+    <p id="emptyState" class="text-sm text-slate-500 px-1 hidden">No drivers yet — add one above.</p>
+  </section>
+
+</main>
+
+<script>
+(function () {
+  const driverTable = document.getElementById('driverTable');
+  const emptyState = document.getElementById('emptyState');
+  const addForm = document.getElementById('addForm');
+  const addError = document.getElementById('addError');
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+  }
+
+  function randomPin() {
+    return String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+  }
+
+  document.getElementById('generatePin').addEventListener('click', () => {
+    document.getElementById('newPin').value = randomPin();
+  });
+
+  document.getElementById('logoutBtn').addEventListener('click', async () => {
+    await fetch('/api/logout', { method: 'POST' });
+    window.location.href = '/login';
+  });
+
+  async function loadDrivers() {
+    const res = await fetch('/api/drivers');
+    if (res.status === 401 || res.status === 403) {
+      window.location.href = '/login';
+      return;
+    }
+    const drivers = await res.json();
+    renderDrivers(drivers);
+  }
+
+  function renderDrivers(drivers) {
+    emptyState.classList.toggle('hidden', drivers.length > 0);
+    driverTable.innerHTML = '';
+
+    drivers.forEach((driver) => {
+      const card = document.createElement('div');
+      card.className = 'bg-slate-800 rounded-xl p-4 flex flex-wrap items-center gap-3' + (driver.active ? '' : ' opacity-60');
+      card.innerHTML = `
+        <div class="flex-1 min-w-[140px]">
+          <div class="font-medium">${escapeHtml(driver.displayName)}</div>
+          <div class="text-xs text-slate-400">Code: ${escapeHtml(driver.code)}</div>
+        </div>
+        <span class="text-xs px-2 py-1 rounded-full ${driver.active ? 'bg-emerald-800 text-emerald-100' : 'bg-slate-700 text-slate-400'}">
+          ${driver.active ? 'active' : 'deactivated'}
+        </span>
+        <div class="flex flex-wrap items-center gap-2">
+          <input type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="New PIN"
+            class="pin-input w-24 rounded-lg bg-slate-700 border border-slate-600 px-2 py-1 text-sm text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-sky-500" />
+          <button class="reset-pin-btn text-xs px-2 py-1 rounded-lg bg-slate-600 hover:bg-slate-500">Reset PIN</button>
+          <button class="toggle-active-btn text-xs px-2 py-1 rounded-lg ${driver.active ? 'bg-red-800 hover:bg-red-700' : 'bg-emerald-800 hover:bg-emerald-700'}">
+            ${driver.active ? 'Deactivate' : 'Reactivate'}
+          </button>
+        </div>
+        <div class="row-error hidden basis-full text-xs text-red-300"></div>
+      `;
+
+      const rowError = card.querySelector('.row-error');
+      function showRowError(message) {
+        rowError.textContent = message;
+        rowError.classList.remove('hidden');
+      }
+
+      card.querySelector('.reset-pin-btn').addEventListener('click', async () => {
+        const pinInput = card.querySelector('.pin-input');
+        const pin = pinInput.value.trim();
+        if (!/^\d{4}$/.test(pin)) {
+          showRowError('Enter a 4-digit PIN to reset.');
+          return;
+        }
+        const res = await fetch(`/api/drivers/${driver.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          showRowError(body.error || 'Failed to reset PIN.');
+          return;
+        }
+        pinInput.value = '';
+        rowError.classList.add('hidden');
+      });
+
+      card.querySelector('.toggle-active-btn').addEventListener('click', async () => {
+        const res = await fetch(`/api/drivers/${driver.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ active: !driver.active }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          showRowError(body.error || 'Failed to update driver.');
+          return;
+        }
+        loadDrivers();
+      });
+
+      driverTable.appendChild(card);
+    });
+  }
+
+  addForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    addError.classList.add('hidden');
+
+    const code = document.getElementById('newCode').value.trim();
+    const displayName = document.getElementById('newDisplayName').value.trim();
+    const pin = document.getElementById('newPin').value.trim();
+
+    const res = await fetch('/api/drivers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, displayName, pin }),
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      addError.textContent = body.error || 'Failed to add driver.';
+      addError.classList.remove('hidden');
+      return;
+    }
+
+    addForm.reset();
+    loadDrivers();
+  });
+
+  async function init() {
+    const res = await fetch('/api/me');
+    if (!res.ok) {
+      window.location.href = '/login';
+      return;
+    }
+    const user = await res.json();
+    if (user.role !== 'dispatcher') {
+      window.location.href = '/login';
+      return;
+    }
+    loadDrivers();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

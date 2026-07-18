@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Dispatch Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="icon" href="data:," />
+<style>
+  html, body { height: 100%; margin: 0; }
+  #app-root { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+  .app-body { flex: 1 1 auto; display: flex; flex-direction: row; overflow: hidden; }
+  .sidebar { flex: 0 0 320px; overflow-y: auto; }
+  .map-wrapper { flex: 1 1 auto; position: relative; overflow: hidden; }
+  #map { width: 100%; height: 100%; }
+
+  @media (max-width: 700px) {
+    .app-body { flex-direction: column; }
+    .sidebar { flex: 0 0 auto; width: 100%; max-height: 40vh; }
+  }
+
+  .driver-dot { border-radius: 50%; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+  .driver-dot.ended { opacity: 0.4; }
+  .driver-pulse-ring {
+    position: absolute; inset: -6px; border-radius: 50%;
+    animation: dpulse 2.2s ease-out infinite;
+  }
+  @keyframes dpulse {
+    0%   { transform: scale(1);   opacity: 0.55; }
+    70%  { transform: scale(2.2); opacity: 0; }
+    100% { transform: scale(2.2); opacity: 0; }
+  }
+</style>
+</head>
+<body class="bg-slate-950 text-slate-100">
+
+<div id="app-root">
+  <header class="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-800 shrink-0">
+    <h1 class="text-lg font-bold">Dispatch Dashboard</h1>
+    <div class="flex items-center gap-3">
+      <span id="connState" class="text-xs px-2 py-1 rounded-full bg-slate-800 text-slate-400">connecting…</span>
+      <span id="userBadge" class="text-xs text-slate-400"></span>
+      <a href="/dispatch/drivers" class="text-xs text-slate-400 hover:text-slate-200 underline">Manage Drivers</a>
+      <button id="logoutBtn" class="text-xs text-slate-400 hover:text-slate-200 underline">Log out</button>
+    </div>
+  </header>
+
+  <div class="app-body">
+    <aside class="sidebar bg-slate-900 border-r border-slate-800 p-3 space-y-2">
+      <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wide px-1">Drivers</h2>
+      <div id="driverList" class="space-y-2"></div>
+      <p id="emptyState" class="text-sm text-slate-500 px-1">No drivers active yet.</p>
+    </aside>
+
+    <div class="map-wrapper">
+      <div id="map"></div>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+(function () {
+  const map = L.map('map', { zoomControl: true }).setView([39.5, -98.35], 4);
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+    maxZoom: 19,
+  }).addTo(map);
+
+  // Server always computes/broadcasts distance in km and speed in km/h
+  // (single canonical representation); these helpers are the only place
+  // unit conversion happens, driven by /api/config.
+  let units = 'metric';
+  function formatDistance(km) {
+    if (units === 'imperial') return (km * 0.621371).toFixed(2) + ' mi';
+    return km.toFixed(2) + ' km';
+  }
+  function formatSpeed(kmh) {
+    if (units === 'imperial') return (kmh * 0.621371).toFixed(1) + ' mph';
+    return kmh.toFixed(1) + ' km/h';
+  }
+
+  // driverId -> hue, stable per driver for the lifetime of the page.
+  const hueCache = new Map();
+  function hueForDriver(driverId) {
+    if (hueCache.has(driverId)) return hueCache.get(driverId);
+    let hash = 0;
+    for (let i = 0; i < driverId.length; i++) {
+      hash = (hash * 31 + driverId.charCodeAt(i)) >>> 0;
+    }
+    const hue = hash % 360;
+    hueCache.set(driverId, hue);
+    return hue;
+  }
+
+  function dotIcon(hue, { selected, ended } = {}) {
+    const color = `hsl(${hue}, 75%, 50%)`;
+    const ring = selected
+      ? `<div class="driver-pulse-ring" style="background:${color}"></div>`
+      : '';
+    return L.divIcon({
+      className: '',
+      iconSize: [16, 16],
+      iconAnchor: [8, 8],
+      html: `<div style="position:relative;width:16px;height:16px">
+               ${ring}
+               <div class="driver-dot${ended ? ' ended' : ''}" style="width:16px;height:16px;background:${color}"></div>
+             </div>`,
+    });
+  }
+
+  // driverId -> { marker, outline, accent } — reused across updates instead
+  // of being torn down and recreated on every tick.
+  const markers = new Map();
+  let selectedDriverId = null;
+
+  function renderBreadcrumb(driver) {
+    const existing = markers.get(driver.driverId);
+    if (!existing) return;
+    const latlngs = driver.history.map((p) => [p.latitude, p.longitude]);
+
+    if (existing.outline) map.removeLayer(existing.outline);
+    if (existing.accent) map.removeLayer(existing.accent);
+
+    if (latlngs.length >= 2) {
+      const hue = hueForDriver(driver.driverId);
+      existing.outline = L.polyline(latlngs, { color: '#ffffff', weight: 7, opacity: 0.7 }).addTo(map);
+      existing.accent = L.polyline(latlngs, { color: `hsl(${hue},75%,50%)`, weight: 4, opacity: 0.9 }).addTo(map);
+    } else {
+      existing.outline = null;
+      existing.accent = null;
+    }
+  }
+
+  function clearBreadcrumb(driverId) {
+    const existing = markers.get(driverId);
+    if (!existing) return;
+    if (existing.outline) map.removeLayer(existing.outline);
+    if (existing.accent) map.removeLayer(existing.accent);
+    existing.outline = null;
+    existing.accent = null;
+  }
+
+  function popupHtml(driver) {
+    const lastSeen = new Date(driver.lastSeen).toLocaleTimeString();
+    return `<div class="text-sm">
+      <div class="font-semibold">${escapeHtml(driver.name)}</div>
+      <div>Status: ${driver.status}</div>
+      <div>Distance: ${formatDistance(driver.distanceKm)}</div>
+      <div>Speed: ${formatSpeed(driver.speedKmh)}</div>
+      <div>Last seen: ${lastSeen}</div>
+    </div>`;
+  }
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+  }
+
+  function upsertMarker(driver) {
+    const hue = hueForDriver(driver.driverId);
+    const latlng = driver.history.length
+      ? [driver.history[driver.history.length - 1].latitude, driver.history[driver.history.length - 1].longitude]
+      : null;
+    if (!latlng) return;
+
+    let entry = markers.get(driver.driverId);
+    if (!entry) {
+      const marker = L.marker(latlng, {
+        icon: dotIcon(hue, { selected: driver.driverId === selectedDriverId, ended: driver.status === 'ended' }),
+      }).addTo(map);
+      marker.on('click', () => selectDriver(driver.driverId));
+      entry = { marker, outline: null, accent: null };
+      markers.set(driver.driverId, entry);
+    } else {
+      entry.marker.setLatLng(latlng);
+      entry.marker.setIcon(
+        dotIcon(hue, { selected: driver.driverId === selectedDriverId, ended: driver.status === 'ended' })
+      );
+    }
+
+    entry.marker.bindPopup(popupHtml(driver));
+    if (driver.driverId === selectedDriverId) {
+      renderBreadcrumb(driver);
+      if (entry.marker.isPopupOpen()) entry.marker.setPopupContent(popupHtml(driver));
+    }
+  }
+
+  function selectDriver(driverId) {
+    if (selectedDriverId && selectedDriverId !== driverId) {
+      clearBreadcrumb(selectedDriverId);
+      const prev = driversById.get(selectedDriverId);
+      if (prev) upsertMarker(prev);
+    }
+    selectedDriverId = driverId;
+    const driver = driversById.get(driverId);
+    if (driver) {
+      upsertMarker(driver);
+      renderBreadcrumb(driver);
+    }
+  }
+
+  const driversById = new Map();
+
+  function renderSidebar() {
+    const listEl = document.getElementById('driverList');
+    const emptyEl = document.getElementById('emptyState');
+    const driverArr = Array.from(driversById.values());
+
+    emptyEl.classList.toggle('hidden', driverArr.length > 0);
+    listEl.innerHTML = '';
+
+    driverArr
+      .sort((a, b) => b.lastSeen - a.lastSeen)
+      .forEach((driver) => {
+        const hue = hueForDriver(driver.driverId);
+        const card = document.createElement('button');
+        card.className = 'w-full text-left rounded-xl p-3 bg-slate-800 hover:bg-slate-700 transition-colors ' +
+          (driver.driverId === selectedDriverId ? 'ring-2 ring-sky-500' : '') +
+          (driver.status === 'ended' ? ' opacity-50' : '');
+        card.innerHTML = `
+          <div class="flex items-center gap-2 mb-1">
+            <span style="width:10px;height:10px;border-radius:50%;background:hsl(${hue},75%,50%)"></span>
+            <span class="font-medium truncate">${escapeHtml(driver.name)}</span>
+            <span class="ml-auto text-xs ${driver.status === 'active' ? 'text-emerald-400' : 'text-slate-500'}">${driver.status}</span>
+          </div>
+          <div class="text-xs text-slate-400 grid grid-cols-2 gap-x-2">
+            <span>Dist: ${formatDistance(driver.distanceKm)}</span>
+            <span>Speed: ${formatSpeed(driver.speedKmh)}</span>
+          </div>
+        `;
+        card.addEventListener('click', () => {
+          selectDriver(driver.driverId);
+          const entry = markers.get(driver.driverId);
+          if (entry) {
+            map.panTo(entry.marker.getLatLng());
+            entry.marker.openPopup();
+          }
+        });
+        listEl.appendChild(card);
+      });
+  }
+
+  function applyDriverUpdate(driver) {
+    driversById.set(driver.driverId, driver);
+    upsertMarker(driver);
+    renderSidebar();
+  }
+
+  function applySnapshot(driverArr) {
+    driversById.clear();
+    driverArr.forEach((driver) => driversById.set(driver.driverId, driver));
+    driverArr.forEach((driver) => upsertMarker(driver));
+    renderSidebar();
+  }
+
+  const connStateEl = document.getElementById('connState');
+  const userBadgeEl = document.getElementById('userBadge');
+  const logoutBtn = document.getElementById('logoutBtn');
+
+  logoutBtn.addEventListener('click', async () => {
+    await fetch('/api/logout', { method: 'POST' });
+    window.location.href = '/login';
+  });
+
+  async function init() {
+    const meRes = await fetch('/api/me');
+    if (!meRes.ok) {
+      window.location.href = '/login';
+      return;
+    }
+    const user = await meRes.json();
+    if (user.role !== 'dispatcher') {
+      window.location.href = '/login';
+      return;
+    }
+    userBadgeEl.textContent = user.displayName;
+
+    const configRes = await fetch('/api/config');
+    if (configRes.ok) {
+      const config = await configRes.json();
+      units = config.units === 'imperial' ? 'imperial' : 'metric';
+    }
+
+    const socket = io();
+
+    socket.on('connect', () => {
+      connStateEl.textContent = 'live';
+      connStateEl.className = 'text-xs px-2 py-1 rounded-full bg-emerald-800 text-emerald-100';
+      socket.emit('join_dispatch');
+    });
+
+    socket.on('disconnect', () => {
+      connStateEl.textContent = 'disconnected';
+      connStateEl.className = 'text-xs px-2 py-1 rounded-full bg-red-800 text-red-100';
+    });
+
+    socket.on('drivers_state', applySnapshot);
+    socket.on('driver_update', applyDriverUpdate);
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

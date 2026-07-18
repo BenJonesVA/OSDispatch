@@ -1,0 +1,14 @@
+[
+  {
+    "username": "driver1",
+    "pin": "1234",
+    "role": "driver",
+    "displayName": "Alex R."
+  },
+  {
+    "username": "dispatch1",
+    "password": "change-me-dispatch",
+    "role": "dispatcher",
+    "displayName": "Dispatch Admin"
+  }
+]

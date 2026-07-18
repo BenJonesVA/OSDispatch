@@ -1,0 +1,19 @@
+{
+  "name": "dispatch-tracker",
+  "version": "1.0.0",
+  "description": "Real-time driver dispatch and tracking system (no native app required)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "connect-pg-simple": "^9.0.1",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.2.0",
+    "express-session": "^1.18.0",
+    "helmet": "^7.1.0",
+    "pg": "^8.11.5",
+    "socket.io": "^4.7.5"
+  }
+}

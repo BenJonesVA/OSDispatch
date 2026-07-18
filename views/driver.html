@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Driver — Dispatch Tracker</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="icon" href="data:," />
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col items-center px-4 py-8">
+
+  <div class="w-full max-w-sm space-y-6">
+
+    <header class="text-center space-y-1">
+      <h1 class="text-2xl font-bold">Driver Check-In</h1>
+      <p class="text-slate-400 text-sm">Keep this page open while on shift.</p>
+    </header>
+
+    <div class="bg-slate-800 rounded-2xl p-5 space-y-4 shadow-lg">
+      <div class="flex items-center justify-between">
+        <span class="text-sm text-slate-400">Logged in as <span id="driverName" class="text-slate-100 font-medium">…</span></span>
+        <button id="logoutBtn" class="text-xs text-slate-400 hover:text-slate-200 underline">Log out</button>
+      </div>
+
+      <button id="shiftToggle"
+        class="w-full py-3 rounded-xl font-semibold text-lg transition-colors bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700">
+        Start Shift
+      </button>
+
+      <div class="flex items-center justify-between text-sm">
+        <span class="text-slate-400">Status</span>
+        <span id="statusBadge" class="px-2 py-0.5 rounded-full bg-slate-700 text-slate-300">Off shift</span>
+      </div>
+
+      <div class="text-xs text-slate-400 space-y-1">
+        <p id="lastFix">Last GPS fix: —</p>
+        <p id="updateCount">Updates sent: 0</p>
+      </div>
+    </div>
+
+    <div id="errorBanner" class="hidden bg-red-900/60 border border-red-700 text-red-100 text-sm rounded-xl p-3"></div>
+
+    <div class="bg-slate-800/60 rounded-xl p-4 text-xs text-slate-400 space-y-1">
+      <p class="font-semibold text-slate-300">Keep your screen on</p>
+      <p>This page streams your location only while it's open and active. If your phone locks or the browser is backgrounded, tracking may pause. Keep the screen on and this tab in the foreground for the duration of your shift.</p>
+    </div>
+  </div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+(function () {
+  const EMIT_INTERVAL_MS = 7000;
+
+  const shiftToggle = document.getElementById('shiftToggle');
+  const statusBadge = document.getElementById('statusBadge');
+  const driverNameEl = document.getElementById('driverName');
+  const logoutBtn = document.getElementById('logoutBtn');
+  const errorBanner = document.getElementById('errorBanner');
+  const lastFixEl = document.getElementById('lastFix');
+  const updateCountEl = document.getElementById('updateCount');
+
+  let socket = null;
+  let onShift = false;
+  let watchId = null;
+  let emitTimer = null;
+  let latestPosition = null;
+  let wakeLock = null;
+  let updateCount = 0;
+
+  function showError(message) {
+    errorBanner.textContent = message;
+    errorBanner.classList.remove('hidden');
+  }
+
+  function clearError() {
+    errorBanner.classList.add('hidden');
+    errorBanner.textContent = '';
+  }
+
+  function setStatus(text, cls) {
+    statusBadge.textContent = text;
+    statusBadge.className = 'px-2 py-0.5 rounded-full ' + cls;
+  }
+
+  async function acquireWakeLock() {
+    if (!('wakeLock' in navigator)) return;
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+    } catch (err) {
+      // Not fatal — the on-screen reminder covers this case.
+    }
+  }
+
+  function releaseWakeLock() {
+    if (wakeLock) {
+      wakeLock.release().catch(() => {});
+      wakeLock = null;
+    }
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (onShift && document.visibilityState === 'visible') {
+      acquireWakeLock();
+    }
+  });
+
+  function geolocationErrorMessage(err) {
+    switch (err.code) {
+      case err.PERMISSION_DENIED:
+        return 'Location permission denied. Enable location access for this site in your browser settings to start your shift.';
+      case err.POSITION_UNAVAILABLE:
+        return 'Location is currently unavailable. Move to an area with better GPS/network signal.';
+      case err.TIMEOUT:
+        return 'Timed out getting your location. Retrying automatically.';
+      default:
+        return 'Unable to get your location.';
+    }
+  }
+
+  function emitLocation() {
+    if (!latestPosition || !socket) return;
+    const { latitude, longitude } = latestPosition.coords;
+    // driverId/name are not sent — the server derives identity from the
+    // authenticated session so a client can never spoof another driver.
+    socket.emit('location_update', {
+      latitude,
+      longitude,
+      timestamp: Date.now(),
+    });
+    updateCount += 1;
+    updateCountEl.textContent = 'Updates sent: ' + updateCount;
+    lastFixEl.textContent = 'Last GPS fix: ' + new Date().toLocaleTimeString();
+  }
+
+  function startShift() {
+    if (!('geolocation' in navigator)) {
+      showError('This browser does not support location tracking.');
+      return;
+    }
+
+    clearError();
+    onShift = true;
+    setStatus('On shift', 'bg-emerald-700 text-emerald-100');
+    shiftToggle.textContent = 'End Shift';
+    shiftToggle.classList.remove('bg-emerald-600', 'hover:bg-emerald-500', 'active:bg-emerald-700');
+    shiftToggle.classList.add('bg-red-600', 'hover:bg-red-500', 'active:bg-red-700');
+
+    acquireWakeLock();
+
+    watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        clearError();
+        latestPosition = pos;
+      },
+      (err) => {
+        showError(geolocationErrorMessage(err));
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+    );
+
+    emitTimer = setInterval(emitLocation, EMIT_INTERVAL_MS);
+  }
+
+  function endShift() {
+    onShift = false;
+    setStatus('Off shift', 'bg-slate-700 text-slate-300');
+    shiftToggle.textContent = 'Start Shift';
+    shiftToggle.classList.remove('bg-red-600', 'hover:bg-red-500', 'active:bg-red-700');
+    shiftToggle.classList.add('bg-emerald-600', 'hover:bg-emerald-500', 'active:bg-emerald-700');
+
+    if (watchId !== null) {
+      navigator.geolocation.clearWatch(watchId);
+      watchId = null;
+    }
+    if (emitTimer !== null) {
+      clearInterval(emitTimer);
+      emitTimer = null;
+    }
+    releaseWakeLock();
+
+    if (socket) socket.emit('end_shift');
+  }
+
+  shiftToggle.addEventListener('click', () => {
+    if (onShift) {
+      endShift();
+    } else {
+      startShift();
+    }
+  });
+
+  logoutBtn.addEventListener('click', async () => {
+    if (onShift) endShift();
+    await fetch('/api/logout', { method: 'POST' });
+    window.location.href = '/login';
+  });
+
+  async function init() {
+    const res = await fetch('/api/me');
+    if (!res.ok) {
+      window.location.href = '/login';
+      return;
+    }
+    const user = await res.json();
+    if (user.role !== 'driver') {
+      window.location.href = '/login';
+      return;
+    }
+    driverNameEl.textContent = user.displayName;
+    socket = io();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
