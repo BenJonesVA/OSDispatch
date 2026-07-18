@@ -282,6 +282,14 @@
             entry.marker.openPopup();
           }
         });
+        card.addEventListener('dblclick', () => {
+          selectDriver(driver.driverId);
+          const entry = markers.get(driver.driverId);
+          if (entry) {
+            map.flyTo(entry.marker.getLatLng(), 18, { animate: true, duration: 0.8 });
+            entry.marker.openPopup();
+          }
+        });
         listEl.appendChild(card);
       });
   }
