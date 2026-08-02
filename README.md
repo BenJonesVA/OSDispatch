@@ -1,5 +1,11 @@
 # OSDispatch
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/node-20-339933?logo=node.js&logoColor=white)](Dockerfile)
+[![Docker Compose](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)](docker-compose.yml)
+[![Express](https://img.shields.io/badge/express-4.x-000000?logo=express&logoColor=white)](package.json)
+[![Socket.io](https://img.shields.io/badge/socket.io-4.x-010101?logo=socket.io&logoColor=white)](package.json)
+
 Real-time driver dispatch and tracking system. Drivers open a mobile webpage (no
 native app), grant location permission, and stream their coordinates to a
 dispatcher dashboard over Socket.io. Built with Express, Socket.io, Leaflet,
@@ -143,3 +149,7 @@ dispatch tracker/
     ├── drivers.html        # driver management (dispatcher-only)
     └── history.html        # per-driver trip history, route replay + speeding events
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
