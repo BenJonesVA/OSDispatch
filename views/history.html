@@ -144,11 +144,9 @@
 
 <script>
 (function () {
-  const map = L.map('map', { zoomControl: true }).setView([39.5, -98.35], 4);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-    maxZoom: 19,
-  }).addTo(map);
+  // Map is created in init(), once /api/config has told us whether a CARTO
+  // API key (now required by CARTO on tile requests) is configured.
+  let map;
 
   let units = 'metric';
   function formatDistance(km) {
@@ -593,11 +591,19 @@
       return;
     }
 
+    let cartoApiKey = '';
     const configRes = await fetch('/api/config');
     if (configRes.ok) {
       const config = await configRes.json();
       units = config.units === 'imperial' ? 'imperial' : 'metric';
+      cartoApiKey = config.cartoApiKey || '';
     }
+
+    map = L.map('map', { zoomControl: true }).setView([39.5, -98.35], 4);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png' + (cartoApiKey ? '?api_key=' + encodeURIComponent(cartoApiKey) : ''), {
+      attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+      maxZoom: 19,
+    }).addTo(map);
 
     const today = new Date().toISOString().slice(0, 10);
     fromDate.value = today;

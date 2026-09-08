@@ -95,6 +95,13 @@ Copy `.env.example` to `.env` and adjust as needed:
   is tagged with the posted speed limit for the nearest tagged road (see
   below); set to `false` to disable if the app container has no outbound
   internet access.
+- `CARTO_API_KEY` — CARTO now requires an API key on requests to its basemap
+  tiles (`basemaps.cartocdn.com`), which the dispatch and history map pages
+  use for the base map. Get a free key from
+  [carto.com/basemaps](https://carto.com/basemaps) and set it here; the
+  server hands it to those pages via `/api/config` and they append it to the
+  tile URL as `?api_key=...`. Leave blank to request tiles unauthenticated —
+  CARTO may rate-limit or reject those requests.
 
 ## TLS / hostname
 

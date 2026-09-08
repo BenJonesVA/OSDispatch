@@ -203,7 +203,10 @@ app.get('/api/me', (req, res) => {
 });
 
 app.get('/api/config', (req, res) => {
-  res.json({ units: process.env.UNITS === 'imperial' ? 'imperial' : 'metric' });
+  res.json({
+    units: process.env.UNITS === 'imperial' ? 'imperial' : 'metric',
+    cartoApiKey: process.env.CARTO_API_KEY || '',
+  });
 });
 
 app.get('/driver', requireRole('driver'), (req, res) => {
